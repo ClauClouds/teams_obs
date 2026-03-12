@@ -1,0 +1,7 @@
+
+# plot folder to ignore
+plots/
+
+
+# unused code files to ignore
+teamx_obs/unused_code.py

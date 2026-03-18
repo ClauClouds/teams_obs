@@ -5,3 +5,15 @@ plots/
 
 # unused code files to ignore
 teamx_obs/unused_code.py
+
+# files 
+*.txt
+
+*.pyc
+# virtual environment folders to ignore
+.teams_venv
+
+
+# folder under readers to ignore
+readers/__pycache__/*
+process/__pypcache__/*

@@ -114,6 +114,7 @@ def read_lwp_iwv(site, date, var, path_root):
 
     # read lwp data 
     if var == 'lwp':
+
         lwp = ds['lwp'].values * 1000 # LWP in gm-2
         lwp_flag = ds['lwp_quality_flag'].values
         elev = ds['elevation_angle'].values
@@ -139,7 +140,7 @@ def read_lwp_iwv(site, date, var, path_root):
     # build output dataset with lwp or iwv, time and site
     ds_out = xr.Dataset(
         {
-            var: (['time'], ),
+            var: (['time'], var_out),
         },
         coords={
             'time': ds.time.values,

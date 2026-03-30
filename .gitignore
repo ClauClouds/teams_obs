@@ -8,10 +8,12 @@ teamx_obs/unused_code.py
 
 # files 
 *.txt
+*.nc
 
 *.pyc
 # virtual environment folders to ignore
 .teams_venv
+
 
 
 # folder under readers to ignore

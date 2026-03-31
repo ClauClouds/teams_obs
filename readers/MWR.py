@@ -114,12 +114,13 @@ def read_lwp_iwv(site, date, var, path_root):
 
     # read lwp data 
     if var == 'lwp':
-
         lwp = ds['lwp'].values * 1000 # LWP in gm-2
         lwp_flag = ds['lwp_quality_flag'].values
         elev = ds['elevation_angle'].values
+        azim = ds['azimuth_angle'].values
         units = 'gm-2'
-        # select only lwp values which have flag = 0
+
+        # select only lwp values which have flag = 0 that are almost zenith (elevation angle > 80 degrees) to avoid having too many nans in the time series of the days (which would lead to having few values to calculate mean and std among days for each time step)
         var_out = np.where((lwp_flag == 0) * (elev > 80.), lwp, np.nan) 
 
         # offset correction for lagonero to avoid negative lwp values
@@ -133,17 +134,26 @@ def read_lwp_iwv(site, date, var, path_root):
         iwv = ds['iwv'].values # kgm-2
         iwv_flag = ds['iwv_quality_flag'].values
         elev = ds['elevation_angle'].values   
+        azim = ds['azimuth_angle'].values
         units = 'kgm-2'
-        # select only iwv values which have flag = 0
+        # select only iwv values which have flag = 0 that are almost zenith (elevation angle > 80 degrees) to avoid having too many nans in the time series of the days (which would lead to having few values to calculate mean and std among days for each time step)
         var_out = np.where((iwv_flag == 0) * (elev > 80.), iwv, np.nan) 
 
     # build output dataset with lwp or iwv, time and site
     ds_out = xr.Dataset(
         {
-            var: (['time'], var_out),
+            var: (['time'], var_out, 
+                  {     
+                    'long_name': 'Liquid Water Path' if var == 'lwp' else 'Integrated Water Vapor',
+                    'units': units
+                }
+            ),
+
         },
         coords={
             'time': ds.time.values,
+            'elevation': ds['elevation_angle'].values,
+            'azimuth': ds['azimuth_angle'].values,
             'site': site,
             'units': units
         }
@@ -298,3 +308,51 @@ def read_all_data_for_campaign(site, var_type):
     return var_matrix, time_cycle
 
 
+
+def read_iwv_elev(site, date, var, elev_sel, path_root):
+    """
+    function to read LWP or IWV values from level 2 MWR radiometer data postprocessed 
+    following actris scripts from
+    Tobias Marke
+
+    Args:
+        site (str): site name
+            Options: 'lagonero', 'collalbo', 'bolzano'
+        date (str): date in 'yyyymmdd' format
+        var: (str): variable to read, 'iwv'
+        elev (float): elevation angle in degrees to filter the data (e.g. 30 degrees)
+        path_root (str): path to the directory where the MWR data is stored
+
+    Returns:
+        xarray.DataArray: Liquid Water Path (LWP) or Integrated Water Vapor (IWV) for 
+        the given site and date in gm-2 (LWP) or kgm-2 (IWV)
+
+    """
+
+    if site == 'collalbo':
+        instr = 'kithat'
+    elif site == 'lagonero':
+        instr = 'tophat'
+    elif site == 'bolzano':
+        instr = 'hatpro'
+    
+    # read yy, mm, dd from date
+    yy = date[:4]
+    mm = date[4:6]
+    dd = date[6:8]
+
+    # set filename
+    filename = f"{path_root}MWR_single_{site}_{yy}{mm}{dd}.nc"
+
+    # read dataset
+    ds = xr.open_dataset(filename) 
+
+    # select indeces where elevation 
+    i_elev_sel = np.where((ds['elevation_angle'].values >= 25) & (ds['elevation_angle'].values <= 35))[0]
+    ds_elev_sel = ds.isel(time=i_elev_sel)
+
+    # select valyes where quality flag is 0
+    iq = np.where(ds_elev_sel['iwv_quality_flag'].values == 0)[0]
+    ds_elev_sel_q = ds_elev_sel.isel(time=iq)
+
+    return ds_elev_sel_q

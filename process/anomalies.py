@@ -35,7 +35,7 @@ def main():
         for site in sites: 
 
             # select which group of days to plot the diurnal cycle for
-            var_type = "iwv" # "lwp" or "iwv"
+            var_type = "lwp" # "lwp" or "iwv"
 
             # read list of days for the convective days and the MOBL thermal days
             if day_type == "convective":

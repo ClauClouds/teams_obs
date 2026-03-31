@@ -82,13 +82,14 @@ def extract_scan_by_id(ds_iwv_elev, scan_ids, scan_id):
 
 def aggregate_scan_by_azimuth(ds_scan):
     """Average repeated beams at the same azimuth within one scan."""
-    df_scan = pd.DataFrame(
-        {
-            'azimuth': ds_scan.azimuth_angle.values,
-            'iwv': ds_scan.iwv.values,
-            'IWV_deviation': ds_scan.IWV_deviation.values,
-        }
-    )
+    df_data = {
+        'azimuth': ds_scan.azimuth_angle.values,
+        'iwv': ds_scan.iwv.values,
+    }
+    if 'IWV_deviation' in ds_scan:
+        df_data['IWV_deviation'] = ds_scan.IWV_deviation.values
+
+    df_scan = pd.DataFrame(df_data)
     df_scan = df_scan.groupby('azimuth', as_index=False).mean().sort_values('azimuth')
 
     return df_scan
@@ -106,7 +107,16 @@ def azimuth_to_edges(azimuth_deg):
     return np.deg2rad(np.r_[first_edge, midpoint_edges, last_edge])
 
 
-def plot_iwv_azimuth_ring(ds_scan, site, elev_sel, var_plot='iwv'):
+def plot_iwv_azimuth_ring(
+    ds_scan,
+    site,
+    elev_sel,
+    var_plot='iwv',
+    ax=None,
+    add_colorbar=True,
+    show_title=True,
+    show_direction_labels=True,
+):
     """Plot IWV as colored azimuth sectors extending from the origin."""
     df_scan = aggregate_scan_by_azimuth(ds_scan)
 
@@ -125,7 +135,11 @@ def plot_iwv_azimuth_ring(ds_scan, site, elev_sel, var_plot='iwv'):
     colorbar_ticks = np.arange(vmin, vmax + tick_step, tick_step)
     norm = plt.matplotlib.colors.BoundaryNorm(color_bounds, cmap.N, clip=True)
 
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={'projection': 'polar'})
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={'projection': 'polar'})
+    else:
+        fig = ax.figure
+
     ax.set_theta_zero_location('N')
     ax.set_theta_direction(-1)
 
@@ -146,25 +160,30 @@ def plot_iwv_azimuth_ring(ds_scan, site, elev_sel, var_plot='iwv'):
     ax.set_ylim(0, outer_radius)
     ax.set_yticks([])
     ax.set_xticks(np.deg2rad(np.arange(0, 360, 45)))
-    ax.set_xticklabels(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'])
+    if show_direction_labels:
+        ax.set_xticklabels(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'])
+    else:
+        ax.set_xticklabels([])
     ax.grid(color='0.8', linewidth=0.8)
     ax.spines['polar'].set_visible(False)
 
-    scan_start = pd.to_datetime(ds_scan.time.values.min()).strftime('%H:%M:%S')
-    scan_end = pd.to_datetime(ds_scan.time.values.max()).strftime('%H:%M:%S')
-    ax.set_title(
-        f"{PLOT_SITES_NAMES[site]} {VAR_DICT[var_plot]['label']} by azimuth\n"
-        f"{pd.to_datetime(ds_scan.time.values[0]).strftime('%Y-%m-%d')} {scan_start}-{scan_end} UTC, elevation {elev_sel}°",
-        fontsize=16,
-        pad=24,
-    )
+    if show_title:
+        scan_start = pd.to_datetime(ds_scan.time.values.min()).strftime('%H:%M:%S')
+        scan_end = pd.to_datetime(ds_scan.time.values.max()).strftime('%H:%M:%S')
+        ax.set_title(
+            f"{PLOT_SITES_NAMES[site]} {VAR_DICT[var_plot]['label']} by azimuth\n"
+            f"{pd.to_datetime(ds_scan.time.values[0]).strftime('%Y-%m-%d')} {scan_start}-{scan_end} UTC, elevation {elev_sel}°",
+            fontsize=16,
+            pad=24,
+        )
 
-    cbar = fig.colorbar(mesh, ax=ax, pad=0.12, shrink=0.8)
-    cbar.set_label(VAR_DICT[var_plot]['label'], fontsize=12)
-    cbar.set_ticks(colorbar_ticks)
-    cbar.ax.tick_params(labelsize=10)
+    if add_colorbar:
+        cbar = fig.colorbar(mesh, ax=ax, pad=0.12, shrink=0.8)
+        cbar.set_label(VAR_DICT[var_plot]['label'], fontsize=12)
+        cbar.set_ticks(colorbar_ticks)
+        cbar.ax.tick_params(labelsize=10)
 
-    return fig
+    return fig, ax, mesh
 
 def main():
 
@@ -203,7 +222,7 @@ def main():
         ds_scan = extract_scan_by_id(ds_iwv_elev, scan_ids, scan_id)
         scan_time = pd.to_datetime(ds_scan.time.values[0])
 
-        fig = plot_iwv_azimuth_ring(ds_scan, site, elev_sel, var2plot)
+        fig, _, _ = plot_iwv_azimuth_ring(ds_scan, site, elev_sel, var2plot)
         fig.savefig(f"{output_dir}/{output_prefix}_{scan_time.strftime('%Y%m%d_%H%M%S')}.png", dpi=300, bbox_inches='tight')
         plt.close(fig)
 

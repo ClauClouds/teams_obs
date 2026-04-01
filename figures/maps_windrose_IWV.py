@@ -165,15 +165,15 @@ def plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_sel
     fig, axes = plt.subplots(
         2,
         3,
-        figsize=(16, 14),
+        figsize=(15, 10.5),
         subplot_kw={'projection': ccrs.PlateCarree()},
     )
     fig.suptitle(
         pd.Timestamp(time_selections[0]).strftime('%Y-%m-%d'),
         fontsize=24,
-        y=0.965,
+        y=0.95,
     )
-    fig.tight_layout(rect=[0.03, 0.03, 0.84, 0.94], w_pad=0.4, h_pad=0.6)
+    fig.subplots_adjust(left=0.035, right=0.84, bottom=0.045, top=0.91, wspace=0.035, hspace=0.07)
 
     inset_size_deg = 0.05
     terrain = None
@@ -193,7 +193,17 @@ def plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_sel
         plot_iwv_ring_on_map(wrax_collalbo, site_names[1], site_datasets[1], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
         mesh = plot_iwv_ring_on_map(wrax_lagonero, site_names[2], site_datasets[2], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
 
-    cax_var = fig.add_axes([0.845, 0.56, 0.015, 0.26])
+    top_row_boxes = [ax.get_position() for ax in axes[0, :]]
+    bottom_row_boxes = [ax.get_position() for ax in axes[1, :]]
+    cbar_x0 = max(box.x1 for box in top_row_boxes) + 0.01
+    cbar_width = 0.012
+
+    top_row_y0 = min(box.y0 for box in top_row_boxes)
+    top_row_y1 = max(box.y1 for box in top_row_boxes)
+    bottom_row_y0 = min(box.y0 for box in bottom_row_boxes)
+    bottom_row_y1 = max(box.y1 for box in bottom_row_boxes)
+
+    cax_var = fig.add_axes([cbar_x0, top_row_y0, cbar_width, top_row_y1 - top_row_y0])
     cbar = fig.colorbar(mesh, cax=cax_var)
     cbar.set_label(VAR_DICT[var_plot]['label'], fontsize=20)
     max_labels = 7 if var_plot == 'iwv' else None
@@ -205,11 +215,10 @@ def plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_sel
     cbar.set_ticks(colorbar_ticks)
     cbar.ax.tick_params(labelsize=18)
 
-    cax_orog = fig.add_axes([0.845, 0.18, 0.015, 0.26])
+    cax_orog = fig.add_axes([cbar_x0, bottom_row_y0, cbar_width, bottom_row_y1 - bottom_row_y0])
     cbar_orog = fig.colorbar(terrain, cax=cax_orog)
     cbar_orog.set_label('Orography [m]', fontsize=20)
     cbar_orog.ax.tick_params(labelsize=18)
-    #fig.tight_layout(rect=[0.03, 0.03, 0.84, 0.94], w_pad=0.4, h_pad=0.6)
 
     fig.savefig(
         f"plots/maps/maps_{var_plot}_{day_string}_panel_{elev_sel}.png",

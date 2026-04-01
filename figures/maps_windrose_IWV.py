@@ -165,15 +165,15 @@ def plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_sel
     fig, axes = plt.subplots(
         2,
         3,
-        figsize=(15, 10.5),
+        figsize=(15, 11.5),
         subplot_kw={'projection': ccrs.PlateCarree()},
     )
     fig.suptitle(
         pd.Timestamp(time_selections[0]).strftime('%Y-%m-%d'),
         fontsize=24,
-        y=0.95,
+        y=0.975,
     )
-    fig.subplots_adjust(left=0.035, right=0.84, bottom=0.045, top=0.91, wspace=0.035, hspace=0.07)
+    fig.subplots_adjust(left=0.035, right=0.98, bottom=0.14, top=0.88, wspace=0.035, hspace=0.16)
 
     inset_size_deg = 0.05
     terrain = None
@@ -181,7 +181,7 @@ def plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_sel
 
     for index, (ax, time_sel) in enumerate(zip(axes.flat, time_selections)):
         terrain = configure_map_axis(ax, domain_ACTA, ds_orography)
-        ax.set_title(pd.Timestamp(time_sel).strftime('%H:%M UTC'), fontsize=20)
+        ax.set_title(pd.Timestamp(time_sel).strftime('%H:%M UTC'), fontsize=20, pad=10)
         ax.set_xticks([])
         ax.set_yticks([])
 
@@ -193,18 +193,14 @@ def plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_sel
         plot_iwv_ring_on_map(wrax_collalbo, site_names[1], site_datasets[1], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
         mesh = plot_iwv_ring_on_map(wrax_lagonero, site_names[2], site_datasets[2], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
 
-    top_row_boxes = [ax.get_position() for ax in axes[0, :]]
-    bottom_row_boxes = [ax.get_position() for ax in axes[1, :]]
-    cbar_x0 = max(box.x1 for box in top_row_boxes) + 0.01
-    cbar_width = 0.012
+    cbar_y0 = 0.055
+    cbar_height = 0.022
+    cbar_width = 0.32
+    cbar_gap = 0.08
+    cbar_left = 0.12
 
-    top_row_y0 = min(box.y0 for box in top_row_boxes)
-    top_row_y1 = max(box.y1 for box in top_row_boxes)
-    bottom_row_y0 = min(box.y0 for box in bottom_row_boxes)
-    bottom_row_y1 = max(box.y1 for box in bottom_row_boxes)
-
-    cax_var = fig.add_axes([cbar_x0, top_row_y0, cbar_width, top_row_y1 - top_row_y0])
-    cbar = fig.colorbar(mesh, cax=cax_var)
+    cax_var = fig.add_axes([cbar_left, cbar_y0, cbar_width, cbar_height])
+    cbar = fig.colorbar(mesh, cax=cax_var, orientation='horizontal')
     cbar.set_label(VAR_DICT[var_plot]['label'], fontsize=20)
     max_labels = 7 if var_plot == 'iwv' else None
     colorbar_ticks = build_colorbar_ticks(
@@ -215,8 +211,8 @@ def plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_sel
     cbar.set_ticks(colorbar_ticks)
     cbar.ax.tick_params(labelsize=18)
 
-    cax_orog = fig.add_axes([cbar_x0, bottom_row_y0, cbar_width, bottom_row_y1 - bottom_row_y0])
-    cbar_orog = fig.colorbar(terrain, cax=cax_orog)
+    cax_orog = fig.add_axes([cbar_left + cbar_width + cbar_gap, cbar_y0, cbar_width, cbar_height])
+    cbar_orog = fig.colorbar(terrain, cax=cax_orog, orientation='horizontal')
     cbar_orog.set_label('Orography [m]', fontsize=20)
     cbar_orog.ax.tick_params(labelsize=18)
 

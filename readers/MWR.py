@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pdb
 from progress.bar import Bar
+from figures.utils import calc_iwv_deviation
 from readers.data_info import MWR_SITES_NAMES
 
 
@@ -355,4 +356,11 @@ def read_iwv_elev(site, date, var, elev_sel, path_root):
     iq = np.where(ds_elev_sel['iwv_quality_flag'].values == 0)[0]
     ds_elev_sel_q = ds_elev_sel.isel(time=iq)
 
+    # Convert slant-path IWV to a vertical-equivalent value using sin(elevation).
+    ds_elev_sel_q['iwv'] = ds_elev_sel_q['iwv'] * np.sin(np.radians(elev_sel))
+
+    # add variable for deviation from mean IWV over the azimuth scan 
+    ds_elev_sel_q['IWV_deviation'] = calc_iwv_deviation(ds_elev_sel_q)
+
+    
     return ds_elev_sel_q

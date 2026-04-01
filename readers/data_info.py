@@ -8,6 +8,9 @@ path_twv = "/Users/claudia/Documents/Data/TWV_MTG_Alps/"
 # MWR radiometer path
 path_MWR = "/Users/claudia/Documents/Data/MWR_TWV_comparison/"
 
+# orography path
+orography_path = "/home/cacquist/Documents/GitHub/EXPATS/orography_expats_high_res.nc"
+
 # sites for comparison of TWV from MTG FCI and MWR radiometer
 site_names = ["bolzano", "collalbo", "lagonero"]
 

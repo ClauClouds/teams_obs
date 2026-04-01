@@ -19,11 +19,11 @@ VAR_DICT = {
     "iwv": {
         "label": "IWV [kg/m$^2$]",  
         "units": "kg/m$^2$",
-        "cmap": CMAP1,
+        "cmap": CMAP2,
         "vmin": 0,
         "vmax": 50,
-        "color_step": 0.5,
-        "tick_step": 2.0,
+        "color_step": 2.0,
+        "tick_step": 5.0,
     },
     "IWV_deviation": {
         "label": "IWV deviation [kgm$^{-2}$]",
@@ -32,6 +32,6 @@ VAR_DICT = {
         "vmin": -10,
         "vmax": 10, 
         "color_step": 0.1,
-        "tick_step": 0.5,
+        "tick_step": 1.0,
         }
 }   

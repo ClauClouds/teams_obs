@@ -6,127 +6,223 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from matplotlib.projections.polar import PolarAxes
 from readers.data_info import PLOT_SITES_NAMES, MWR_SITES_NAMES, site_lats, site_lons
 from readers.MWR import read_iwv_elev
-from figures.IWV_spatial import calc_iwv_deviation, extract_closest_scan
 from figures.plot_settings import VAR_DICT
 import numpy as np
 import pandas as pd
 import xarray as xr
+from figures.utils import calc_iwv_deviation, create_site_inset, plot_iwv_ring_on_map
+from readers.data_info import orography_path
 
 
-def create_site_inset(main_ax, lon, lat, size_deg):
-    """Create a polar inset axis centered on a site location."""
-    return inset_axes(
-        main_ax,
-        width="100%",
-        height="100%",
-        bbox_to_anchor=(
-            lon - size_deg / 2,
-            lat - size_deg / 2,
-            size_deg,
-            size_deg,
-        ),
-        bbox_transform=main_ax.transData,
-        axes_class=PolarAxes,
+def build_colorbar_ticks(var_plot, max_labels=None, exact_labels=False):
+    """Build readable colorbar ticks for the selected variable."""
+    tick_step = VAR_DICT[var_plot].get('tick_step', 2.0)
+
+    if exact_labels and max_labels is not None and max_labels > 1:
+        return np.linspace(
+            VAR_DICT[var_plot]['vmin'],
+            VAR_DICT[var_plot]['vmax'],
+            max_labels,
+        )
+
+    ticks = np.arange(
+        VAR_DICT[var_plot]['vmin'],
+        VAR_DICT[var_plot]['vmax'] + 0.5 * tick_step,
+        tick_step,
     )
 
+    if max_labels is not None and len(ticks) > max_labels:
+        stride = int(np.ceil((len(ticks) - 1) / (max_labels - 1)))
+        ticks = ticks[::stride]
+        if not np.isclose(ticks[-1], VAR_DICT[var_plot]['vmax']):
+            ticks = np.r_[ticks, VAR_DICT[var_plot]['vmax']]
 
-def aggregate_scan_by_azimuth(ds_scan):
-    """Average repeated beams at the same azimuth within one scan."""
-    df_data = {
-        'azimuth': ds_scan.azimuth_angle.values,
-        'iwv': ds_scan.iwv.values,
-    }
-    if 'IWV_deviation' in ds_scan:
-        df_data['IWV_deviation'] = ds_scan.IWV_deviation.values
-
-    df_scan = pd.DataFrame(df_data)
-    return df_scan.groupby('azimuth', as_index=False).mean().sort_values('azimuth')
-
-
-def azimuth_to_edges(azimuth_deg):
-    """Convert azimuth centers to angular bin edges in radians."""
-    if len(azimuth_deg) == 1:
-        width_deg = 5.0
-        return np.deg2rad(np.array([azimuth_deg[0] - width_deg / 2, azimuth_deg[0] + width_deg / 2]))
-
-    midpoint_edges = 0.5 * (azimuth_deg[:-1] + azimuth_deg[1:])
-    first_edge = azimuth_deg[0] - 0.5 * (azimuth_deg[1] - azimuth_deg[0])
-    last_edge = azimuth_deg[-1] + 0.5 * (azimuth_deg[-1] - azimuth_deg[-2])
-    return np.deg2rad(np.r_[first_edge, midpoint_edges, last_edge])
-
-
-def plot_map_azimuth_ring(ax, ds_scan, site, elev_sel, var_plot='IWV_deviation'):
-    """Draw one azimuth-ring plot on an existing polar inset axis."""
-    df_scan = aggregate_scan_by_azimuth(ds_scan)
-
-    azimuth_deg = df_scan['azimuth'].to_numpy()
-    values = df_scan[var_plot].to_numpy()
-    theta_edges = azimuth_to_edges(azimuth_deg)
-
-    cmap = VAR_DICT[var_plot]['cmap']
-    vmin = VAR_DICT[var_plot]['vmin']
-    vmax = VAR_DICT[var_plot]['vmax']
-    color_step = VAR_DICT[var_plot].get('color_step', 0.5)
-    color_bounds = np.arange(vmin, vmax + color_step, color_step)
-    norm = plt.matplotlib.colors.BoundaryNorm(color_bounds, cmap.N, clip=True)
-
-    ax.set_theta_zero_location('N')
-    ax.set_theta_direction(-1)
-
-    theta_grid, radius_grid = np.meshgrid(theta_edges, np.array([0.0, 1.0]))
-    mesh = ax.pcolormesh(
-        theta_grid,
-        radius_grid,
-        values[np.newaxis, :],
-        cmap=cmap,
-        norm=norm,
-        shading='flat',
-        edgecolors='white',
-        linewidth=0.6,
-    )
-
-    ax.plot(np.linspace(0, 2 * np.pi, 100), np.ones(100), color='black', linewidth=1.0)
-    ax.set_ylim(0, 1.0)
-    ax.set_yticks([])
-    ax.set_xticks(np.deg2rad(np.arange(0, 360, 90)))
-    ax.set_xticklabels([])
-    ax.grid(color='0.8', linewidth=0.6)
-    ax.spines['polar'].set_visible(False)
-    ax.text(-0.12, 0.5, PLOT_SITES_NAMES[site], transform=ax.transAxes, ha='right', va='center', fontsize=8)
-
-    return mesh
-
-
-def plot_iwv_ring_on_map(ax, site, day_string, elev_sel, time_sel, var_plot='IWV_deviation'):
-    """Draw one azimuth-ring scan for a site on an existing map inset axis."""
-    path_root = f"/data/obs/campaigns/teamx/{site}/{MWR_SITES_NAMES[site]}/actris/level2/{day_string[:4]}/{day_string[4:6]}/{day_string[6:8]}/"
-    ds_iwv_elev = read_iwv_elev(site, day_string, 'iwv', elev_sel, path_root)
-
-    if var_plot == 'IWV_deviation':
-        ds_iwv_elev['IWV_deviation'] = calc_iwv_deviation(ds_iwv_elev)
-
-    iwv_min = ds_iwv_elev.iwv.min().item()
-    iwv_max = ds_iwv_elev.iwv.max().item()
-    VAR_DICT['iwv']['vmin'] = np.floor(iwv_min / 2) * 2
-    VAR_DICT['iwv']['vmax'] = np.ceil(iwv_max / 2) * 2
-
-    if 'IWV_deviation' in ds_iwv_elev:
-        iwv_dev_max = np.nanmean(np.abs(ds_iwv_elev.IWV_deviation.values))
-        VAR_DICT['IWV_deviation']['vmin'] = -np.ceil(iwv_dev_max / 2) * 2
-        VAR_DICT['IWV_deviation']['vmax'] = np.ceil(iwv_dev_max / 2) * 2
-
-    ds_scan = extract_closest_scan(ds_iwv_elev, time_sel)
-    return plot_map_azimuth_ring(ax, ds_scan, site, elev_sel, var_plot=var_plot)
-
+    return ticks
 
 def main():
-    day_string = "20250625"
-    elev_sel = 30
-    time_sel = f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T12:00:00"
-    var_plot = 'IWV_deviation'
-    orography_path = "/home/cacquist/Documents/GitHub/EXPATS/orography_expats_high_res.nc"
 
-    # Coordinates of the station we were measuring windspeed
+    # define the time and variable to plot
+    elev_sel = 30 # other options are 10, 20, 30,
+    var_plot_names = ['iwv', 'IWV_deviation'] # other options are 'IWV_deviation' 
+    Transparent_flag = False # whether to save the figure with transparent background (True) or white background (False)
+    plot_type = "hourly_mean" # "hourly_mean" or "time_steps"
+
+    # select day to plot
+    day_string = "20250625"
+    # set hours to plot and time steps array for single plotting without averages
+    hours = ["06:00", "09:00", "12:00", "15:00", "18:00", "20:00"]
+    time_steps = [f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T08:15:00",
+                    f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T12:15:00",
+                    f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T16:15:00",
+                    f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T20:15:00"]
+
+    if plot_type == "hourly_mean":
+        
+        # plot all selected hours in a single 3x2 figure for each variable.
+        for var_plot in var_plot_names:
+            print(f"Plotting 3x2 panel of spatial distribution of {var_plot} for {day_string}...")
+            time_selections = [
+                f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T{hour}:00"
+                for hour in hours
+            ]
+            plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_selections, Transparent_flag)
+
+
+    elif plot_type == "time_steps":
+
+
+        # loop on time steps to plot spatial distribution of IWV values and IWV deviation at each time step without averaging.
+        for var_plot in var_plot_names:
+            for time_sel in time_steps:
+                plot_spatial_iwv_distribution(day_string, elev_sel, var_plot, time_sel, plot_type, Transparent_flag)
+
+
+    else:
+        raise ValueError("plot_type must be either 'hourly_mean' or 'time_steps')")
+
+
+
+
+
+
+def prepare_site_datasets(day_string, elev_sel, var_plot, plot_type):
+    """Read site datasets and define one shared normalization for the chosen variable."""
+    site_names = ['bolzano', 'collalbo', 'lagonero']
+    site_value_mins = []
+    site_value_maxs = []
+    site_datasets = []
+
+    iwv_tick_step = VAR_DICT['iwv'].get('tick_step', 5.0)
+    iwv_dev_tick_step = VAR_DICT['IWV_deviation'].get('tick_step', 1.0)
+
+    for site_name in site_names:
+        path_root = f"/data/obs/campaigns/teamx/{site_name}/{MWR_SITES_NAMES[site_name]}/actris/level2/{day_string[:4]}/{day_string[4:6]}/{day_string[6:8]}/"
+        ds_site = read_iwv_elev(site_name, day_string, 'iwv', elev_sel, path_root)
+
+        if var_plot == 'IWV_deviation':
+            ds_site['IWV_deviation'] = calc_iwv_deviation(ds_site)
+
+        if plot_type == "hourly_mean":
+            site_values = ds_site[var_plot].resample(time='1h').mean().values
+        elif plot_type == "time_steps":
+            site_values = ds_site[var_plot].values
+        else:
+            raise ValueError("plot_type must be either 'hourly_mean' or 'time_steps')")
+
+        if var_plot == 'IWV_deviation':
+            site_abs_max = np.nanmax(np.abs(site_values))
+            site_abs_max = max(site_abs_max, 4.0)
+            site_value_mins.append(-np.ceil(site_abs_max / iwv_dev_tick_step) * iwv_dev_tick_step)
+            site_value_maxs.append(np.ceil(site_abs_max / iwv_dev_tick_step) * iwv_dev_tick_step)
+        elif var_plot == 'iwv':
+            site_value_mins.append(np.floor(np.nanmin(site_values) / iwv_tick_step) * iwv_tick_step)
+            site_value_maxs.append(np.ceil(np.nanmax(site_values) / iwv_tick_step) * iwv_tick_step)
+        else:
+            raise ValueError("var_plot must be either 'iwv' or 'IWV_deviation'")
+
+        site_datasets.append(ds_site)
+
+    VAR_DICT[var_plot]['vmin'] = float(np.nanmin(site_value_mins))
+    VAR_DICT[var_plot]['vmax'] = float(np.nanmax(site_value_maxs))
+
+    return site_names, site_datasets
+
+
+def configure_map_axis(main_ax, domain_ACTA, ds_orography):
+    """Configure one map axis and draw the orography background."""
+    main_ax.coastlines(resolution='10m', color='0.35', linestyle=':', linewidth=0.5)
+    main_ax.add_feature(cfeature.BORDERS, linestyle=':', edgecolor='0.35', linewidth=0.5)
+    main_ax.set_extent(domain_ACTA, crs=ccrs.PlateCarree())
+
+    return main_ax.pcolormesh(
+        ds_orography['lons'].values,
+        ds_orography['lats'].values,
+        ds_orography['orography'].values,
+        cmap='Greys',
+        vmin=0,
+        vmax=2500,
+        shading='auto',
+        alpha=0.95,
+        transform=ccrs.PlateCarree(),
+        zorder=1,
+    )
+
+
+def plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_selections, Transparent_flag=False):
+    """Create a 3x2 panel of hourly spatial distributions with shared figure colorbars."""
+    site_names, site_datasets = prepare_site_datasets(day_string, elev_sel, var_plot, plot_type='hourly_mean')
+
+    lon_margin = 0.07
+    lat_margin = 0.06
+    domain_ACTA = [
+        min(site_lons) - lon_margin,
+        max(site_lons) + lon_margin,
+        min(site_lats) - lat_margin,
+        max(site_lats) + lat_margin,
+    ]
+
+    ds_orography = xr.open_dataset(orography_path)
+    fig, axes = plt.subplots(
+        2,
+        3,
+        figsize=(16, 14),
+        subplot_kw={'projection': ccrs.PlateCarree()},
+    )
+    fig.suptitle(
+        pd.Timestamp(time_selections[0]).strftime('%Y-%m-%d'),
+        fontsize=24,
+        y=0.965,
+    )
+    fig.tight_layout(rect=[0.03, 0.03, 0.84, 0.94], w_pad=0.4, h_pad=0.6)
+
+    inset_size_deg = 0.05
+    terrain = None
+    mesh = None
+
+    for index, (ax, time_sel) in enumerate(zip(axes.flat, time_selections)):
+        terrain = configure_map_axis(ax, domain_ACTA, ds_orography)
+        ax.set_title(pd.Timestamp(time_sel).strftime('%H:%M UTC'), fontsize=20)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        wrax_bolzano = create_site_inset(ax, site_lons[0], site_lats[0], inset_size_deg)
+        wrax_collalbo = create_site_inset(ax, site_lons[1], site_lats[1], inset_size_deg)
+        wrax_lagonero = create_site_inset(ax, site_lons[2], site_lats[2], inset_size_deg)
+
+        plot_iwv_ring_on_map(wrax_bolzano, site_names[0], site_datasets[0], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
+        plot_iwv_ring_on_map(wrax_collalbo, site_names[1], site_datasets[1], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
+        mesh = plot_iwv_ring_on_map(wrax_lagonero, site_names[2], site_datasets[2], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
+
+    cax_var = fig.add_axes([0.845, 0.56, 0.015, 0.26])
+    cbar = fig.colorbar(mesh, cax=cax_var)
+    cbar.set_label(VAR_DICT[var_plot]['label'], fontsize=20)
+    max_labels = 7 if var_plot == 'iwv' else None
+    colorbar_ticks = build_colorbar_ticks(
+        var_plot,
+        max_labels=max_labels,
+        exact_labels=(var_plot == 'iwv'),
+    )
+    cbar.set_ticks(colorbar_ticks)
+    cbar.ax.tick_params(labelsize=18)
+
+    cax_orog = fig.add_axes([0.845, 0.18, 0.015, 0.26])
+    cbar_orog = fig.colorbar(terrain, cax=cax_orog)
+    cbar_orog.set_label('Orography [m]', fontsize=20)
+    cbar_orog.ax.tick_params(labelsize=18)
+    #fig.tight_layout(rect=[0.03, 0.03, 0.84, 0.94], w_pad=0.4, h_pad=0.6)
+
+    fig.savefig(
+        f"plots/maps/maps_{var_plot}_{day_string}_panel_{elev_sel}.png",
+        dpi=300,
+        bbox_inches='tight',
+        transparent=Transparent_flag,
+    )
+    plt.close(fig)
+
+def plot_spatial_iwv_distribution(day_string, elev_sel, var_plot, time_sel, plot_type, Transparent_flag=False):
+    """Create a single map for one selected time."""
+    site_names, site_datasets = prepare_site_datasets(day_string, elev_sel, var_plot, plot_type)
+
     lat_bolzano, lon_bolzano = site_lats[0], site_lons[0]
     lat_collalbo, lon_collalbo = site_lats[1], site_lons[1]
     lat_lagonero, lon_lagonero = site_lats[2], site_lons[2]
@@ -140,44 +236,36 @@ def main():
         max(site_lats) + lat_margin,
     ]
 
-    # plot map of the teamx domain
     fig = plt.figure(figsize=(8, 6))
-    # Plot data
     main_ax = plt.axes(projection=ccrs.PlateCarree())
-    main_ax.set_title("TeamX domain", fontsize=16)
-    # Add features
-    main_ax.coastlines(resolution='10m', color='0.35', linestyle=':', linewidth=0.5)
-    main_ax.add_feature(cfeature.BORDERS, linestyle=':', color='0.35', linewidth=0.5)
-    main_ax.set_extent(domain_ACTA, crs=ccrs.PlateCarree())
+    main_ax.set_title("", fontsize=16)
 
-    # plot high-resolution orography as the map background
     ds_orography = xr.open_dataset(orography_path)
-    terrain = main_ax.pcolormesh(
-        ds_orography['lons'].values,
-        ds_orography['lats'].values,
-        ds_orography['orography'].values,
-        cmap='Greys',
-        vmin=0,
-        vmax=2500,
-        shading='auto',
-        alpha=0.95,
-        transform=ccrs.PlateCarree(),
-        zorder=1,
-    )
+    terrain = configure_map_axis(main_ax, domain_ACTA, ds_orography)
+
+    cax_orog = fig.add_axes([0.18, 0.06, 0.40, 0.02])
+    cbar_orog = fig.colorbar(terrain, cax=cax_orog, orientation='horizontal')
+    cbar_orog.set_label('Orography [m]', fontsize=10)
+    cbar_orog.ax.tick_params(labelsize=9)
 
     inset_size_deg = 0.05
     wrax_bolzano = create_site_inset(main_ax, lon_bolzano, lat_bolzano, inset_size_deg)
     wrax_collalbo = create_site_inset(main_ax, lon_collalbo, lat_collalbo, inset_size_deg)
     wrax_lagonero = create_site_inset(main_ax, lon_lagonero, lat_lagonero, inset_size_deg)
 
-    plot_iwv_ring_on_map(wrax_bolzano, 'bolzano', day_string, elev_sel, time_sel, var_plot=var_plot)
-    plot_iwv_ring_on_map(wrax_collalbo, 'collalbo', day_string, elev_sel, time_sel, var_plot=var_plot)
-    mesh = plot_iwv_ring_on_map(wrax_lagonero, 'lagonero', day_string, elev_sel, time_sel, var_plot=var_plot)
+    plot_iwv_ring_on_map(wrax_bolzano, site_names[0], site_datasets[0], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
+    plot_iwv_ring_on_map(wrax_collalbo, site_names[1], site_datasets[1], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
+    mesh = plot_iwv_ring_on_map(wrax_lagonero, site_names[2], site_datasets[2], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
 
-    cbar = fig.colorbar(mesh, ax=main_ax, pad=0.02, shrink=0.75)
+    cbar = fig.colorbar(mesh, ax=main_ax, pad=0.01, shrink=0.68, fraction=0.035)
     cbar.set_label(VAR_DICT[var_plot]['label'], fontsize=10)
-    tick_step = VAR_DICT[var_plot].get('tick_step', 2.0)
-    cbar.set_ticks(np.arange(VAR_DICT[var_plot]['vmin'], VAR_DICT[var_plot]['vmax'] + tick_step, tick_step))
+    max_labels = 7 if var_plot == 'iwv' else None
+    colorbar_ticks = build_colorbar_ticks(
+        var_plot,
+        max_labels=max_labels,
+        exact_labels=(var_plot == 'iwv'),
+    )
+    cbar.set_ticks(colorbar_ticks)
     cbar.ax.tick_params(labelsize=9)
 
     timestamp_label = pd.Timestamp(time_sel).strftime('%Y-%m-%d %H:%M UTC')
@@ -192,9 +280,16 @@ def main():
         bbox={'facecolor': 'white', 'edgecolor': 'none', 'alpha': 0.8, 'boxstyle': 'round,pad=0.2'},
     )
 
-    savefig = True
-    if savefig:
-        fig.savefig("plots/map_windrose_IWV.png", dpi=300, bbox_inches='tight')
+    fig.tight_layout(rect=[0.03, 0.08, 0.90, 0.98])
+
+    fig.savefig(
+        f"plots/maps/maps_{var_plot}_{day_string}_{time_sel}_{elev_sel}.png",
+        dpi=300,
+        bbox_inches='tight',
+        transparent=Transparent_flag,
+    )
+    plt.close(fig)
+
 
 if __name__ == "__main__":
     main()

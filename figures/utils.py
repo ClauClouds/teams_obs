@@ -362,3 +362,68 @@ def make_video_from_frames(input_framerate, output_prefix, output_dir, target_du
         if file.startswith(output_prefix) and file.endswith(".png"):
             os.remove(os.path.join(output_dir, file))
     return None
+
+
+def find_all_files_for_site(path_root, filename_string, site_name):
+    """
+    function to find all files witha given string in all subdirectories of a given root path
+
+    Args:
+        path_root (str): root path to search for files
+        filename_string (str): string to search for in filenames
+        site_name (str): name of the site for which files are being searched, used for printing the number of files found
+
+    Returns:
+        list: list of file paths that match the search criteria
+        int: number of files found
+    """
+
+    all_files = []
+    for root, dirs, files in os.walk(path_root):
+        for file in files:
+            if file.endswith(".nc") and filename_string in file:
+                all_files.append(os.path.join(root, file))
+
+    print(f"Found {len(all_files)} files for site {site_name} in path {path_root}.")
+    return all_files, len(all_files)
+
+
+
+
+def read_file_list_for_mode(path_root, site_name, mode, iop_conv_days, iop_MoBL_T_days):
+    """
+    code to read the list of files for a given site and a given mode,
+      which can be "diurnal_cycle", "convective_days" or "MOBL_T_days".    
+
+    Args:
+        path_root (str): root path where the files are stored
+        site_name (str): name of the site for which files are being searched
+        mode (str): mode for which files are being searched, can be "diurnal_cycle", "convective_days" or "MOBL_T_days"
+        iop_conv_days (list): list of convective days to filter files for the "convective_days" mode
+        iop_MoBL_T_days (list): list of MoBL_T days to filter files for the "MOBL_T_days" mode
+    Raises:
+        ValueError: if the mode is not one of the expected values
+
+    Returns:
+        list: list of file paths that match the search criteria
+        int: number of files found
+    Dependencies:
+        find_all_files_for_site: function to find all files with a given string in all sub
+        directories of a given root path, used to find the initial list of files before filtering by mode   
+    """
+    if mode == "diurnal_cycle":
+        file_found_list, N_stat = find_all_files_for_site(path_root, f"MWR_single_{site_name}_", site_name)
+    elif mode == "convective_days":
+        # read all files
+        file_found_list, N_stat = find_all_files_for_site(path_root, f"MWR_single_{site_name}_", site_name)
+        # select from file_found_list only the files corresponding to the convective days defined in data_info.py
+        file_found_list = [file for file in file_found_list if any(day in file for day in iop_conv_days)]
+    elif mode == "MOBL_T_days":
+        # read all files
+        file_found_list, N_stat = find_all_files_for_site(path_root, f"MWR_single_{site_name}_", site_name)
+        # select from file_found_list only the files corresponding to the MoBL_T days defined in data_info.py
+        file_found_list = [file for file in file_found_list if any(day in file for day in iop_MoBL_T_days)]
+    else:
+        raise ValueError("mode must be either 'diurnal_cycle', 'convective_days' or 'MOBL_T_days'")
+    
+    return file_found_list, N_stat

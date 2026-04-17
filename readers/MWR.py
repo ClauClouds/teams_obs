@@ -349,7 +349,10 @@ def read_iwv_elev(site, date, var, elev_sel, path_root):
     ds = xr.open_dataset(filename) 
 
     # select indeces where elevation 
-    i_elev_sel = np.where((ds['elevation_angle'].values >= 25) & (ds['elevation_angle'].values <= 35))[0]
+    min_elev = elev_sel - 5
+    max_elev = elev_sel + 5
+
+    i_elev_sel = np.where((ds['elevation_angle'].values >= min_elev) & (ds['elevation_angle'].values <= max_elev))[0]
     ds_elev_sel = ds.isel(time=i_elev_sel)
 
     # select valyes where quality flag is 0
@@ -361,6 +364,5 @@ def read_iwv_elev(site, date, var, elev_sel, path_root):
 
     # add variable for deviation from mean IWV over the azimuth scan 
     ds_elev_sel_q['IWV_deviation'] = calc_iwv_deviation(ds_elev_sel_q)
-
     
     return ds_elev_sel_q

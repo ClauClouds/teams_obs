@@ -31,6 +31,9 @@ def get_scan_ids(ds_iwv_elev, max_time_gap_seconds=300):
     time_values = pd.to_datetime(ds_iwv_elev.time.values)
     azimuth_values = ds_iwv_elev.azimuth_angle.values
 
+    if len(time_values) == 0:
+        return np.array([], dtype=int)
+
     time_diffs = np.diff(time_values.values) / np.timedelta64(1, 's')
     azimuth_diffs = np.diff(azimuth_values)
     scan_start = np.r_[True, (time_diffs > max_time_gap_seconds) | (azimuth_diffs < 0)]
@@ -287,6 +290,12 @@ def plot_map_azimuth_ring(ax, ds_scan, site, elev_sel, var_plot):
 
 def plot_iwv_ring_on_map(ax, site, ds_iwv_elev, day_string, elev_sel, time_sel, var_plot, update_limits=True):
     """Draw one azimuth-ring scan for a site on an existing map inset axis."""
+    if ds_iwv_elev.sizes.get('time', 0) == 0:
+        ax.set_axis_off()
+        ax.text(0.5, 0.55, 'No\ndata', transform=ax.transAxes, ha='center', va='center', fontsize=8)
+        ax.text(-0.12, 0.5, PLOT_SITES_NAMES[site], transform=ax.transAxes, ha='right', va='center', fontsize=8)
+        return None
+
     # add max and min IWV values to the VAR_DICT to set the color scale of the plot, based on the values in the dataset
     if update_limits and var_plot == 'iwv':
         iwv_min = ds_iwv_elev.iwv.min().item()

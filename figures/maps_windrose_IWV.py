@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from figures.utils import calc_iwv_deviation, create_site_inset, plot_iwv_ring_on_map
-from readers.data_info import orography_path
-
+from readers.data_info import orography_path, iop_conv_days, iop_MoBL_T_days
+import os
 
 def build_colorbar_ticks(var_plot, max_labels=None, exact_labels=False):
     """Build readable colorbar ticks for the selected variable."""
@@ -47,38 +47,54 @@ def main():
     Transparent_flag = False # whether to save the figure with transparent background (True) or white background (False)
     plot_type = "hourly_mean" # "hourly_mean" or "time_steps"
 
-    # select day to plot
-    day_string = "20250625"
-    # set hours to plot and time steps array for single plotting without averages
-    hours = ["06:00", "09:00", "12:00", "15:00", "18:00", "20:00"]
-    time_steps = [f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T08:15:00",
-                    f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T12:15:00",
-                    f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T16:15:00",
-                    f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T20:15:00"]
+    # select days of IOP to plot from convective days and MoBL_T days lists defined in data_info.py
+    days = iop_conv_days + iop_MoBL_T_days
+    for day_string in days:
+        print(f"Processing day {day_string}...")
 
-    if plot_type == "hourly_mean":
-        
-        # plot all selected hours in a single 3x2 figure for each variable.
-        for var_plot in var_plot_names:
-            print(f"Plotting 3x2 panel of spatial distribution of {var_plot} for {day_string}...")
-            time_selections = [
-                f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T{hour}:00"
-                for hour in hours
-            ]
-            plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_selections, Transparent_flag)
+        # check is the day is already processed
+        output_file = f"plots/maps/maps_{var_plot_names[0]}_{day_string}_panel_{elev_sel}.png"
+
+        if os.path.exists(output_file):            
+            print(f"File {output_file} already exists. Skipping day {day_string}.")
+            continue
+
+        # avoid processing 20250722 for now because of data issues
+        if day_string == "20250722":
+            print(f"Skipping day {day_string} due to data issues.")
+            continue
 
 
-    elif plot_type == "time_steps":
+        # set hours to plot and time steps array for single plotting without averages 6,8,10,12,14,16
+        hours = ["06:00", "08:00", "10:00", "12:00", "14:00", "16:00"]
+        time_steps = [f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T08:15:00",
+                        f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T12:15:00",
+                        f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T16:15:00",
+                        f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T20:15:00"]
+
+        if plot_type == "hourly_mean":
+            
+            # plot all selected hours in a single 3x2 figure for each variable.
+            for var_plot in var_plot_names:
+                print(f"Plotting 3x2 panel of spatial distribution of {var_plot} for {day_string}...")
+                time_selections = [
+                    f"{day_string[:4]}-{day_string[4:6]}-{day_string[6:8]}T{hour}:00"
+                    for hour in hours
+                ]
+                plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_selections, Transparent_flag)
 
 
-        # loop on time steps to plot spatial distribution of IWV values and IWV deviation at each time step without averaging.
-        for var_plot in var_plot_names:
-            for time_sel in time_steps:
-                plot_spatial_iwv_distribution(day_string, elev_sel, var_plot, time_sel, plot_type, Transparent_flag)
+        elif plot_type == "time_steps":
 
 
-    else:
-        raise ValueError("plot_type must be either 'hourly_mean' or 'time_steps')")
+            # loop on time steps to plot spatial distribution of IWV values and IWV deviation at each time step without averaging.
+            for var_plot in var_plot_names:
+                for time_sel in time_steps:
+                    plot_spatial_iwv_distribution(day_string, elev_sel, var_plot, time_sel, plot_type, Transparent_flag)
+
+
+        else:
+            raise ValueError("plot_type must be either 'hourly_mean' or 'time_steps')")
 
 
 
@@ -98,6 +114,11 @@ def prepare_site_datasets(day_string, elev_sel, var_plot, plot_type):
     for site_name in site_names:
         path_root = f"/data/obs/campaigns/teamx/{site_name}/{MWR_SITES_NAMES[site_name]}/actris/level2/{day_string[:4]}/{day_string[4:6]}/{day_string[6:8]}/"
         ds_site = read_iwv_elev(site_name, day_string, 'iwv', elev_sel, path_root)
+        site_datasets.append(ds_site)
+
+        if ds_site.sizes.get('time', 0) == 0:
+            print(f"No valid IWV data for {site_name} on {day_string} at {elev_sel} deg. Leaving inset empty.")
+            continue
 
         if var_plot == 'IWV_deviation':
             ds_site['IWV_deviation'] = calc_iwv_deviation(ds_site)
@@ -120,10 +141,9 @@ def prepare_site_datasets(day_string, elev_sel, var_plot, plot_type):
         else:
             raise ValueError("var_plot must be either 'iwv' or 'IWV_deviation'")
 
-        site_datasets.append(ds_site)
-
-    VAR_DICT[var_plot]['vmin'] = float(np.nanmin(site_value_mins))
-    VAR_DICT[var_plot]['vmax'] = float(np.nanmax(site_value_maxs))
+    if site_value_mins and site_value_maxs:
+        VAR_DICT[var_plot]['vmin'] = float(np.nanmin(site_value_mins))
+        VAR_DICT[var_plot]['vmax'] = float(np.nanmax(site_value_maxs))
 
     return site_names, site_datasets
 
@@ -189,9 +209,26 @@ def plot_spatial_iwv_distribution_panel(day_string, elev_sel, var_plot, time_sel
         wrax_collalbo = create_site_inset(ax, site_lons[1], site_lats[1], inset_size_deg)
         wrax_lagonero = create_site_inset(ax, site_lons[2], site_lats[2], inset_size_deg)
 
-        plot_iwv_ring_on_map(wrax_bolzano, site_names[0], site_datasets[0], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
-        plot_iwv_ring_on_map(wrax_collalbo, site_names[1], site_datasets[1], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
-        mesh = plot_iwv_ring_on_map(wrax_lagonero, site_names[2], site_datasets[2], day_string, elev_sel, time_sel, var_plot=var_plot, update_limits=False)
+        for inset_ax, site_name, ds_site in zip(
+            [wrax_bolzano, wrax_collalbo, wrax_lagonero],
+            site_names,
+            site_datasets,
+        ):
+            current_mesh = plot_iwv_ring_on_map(
+                inset_ax,
+                site_name,
+                ds_site,
+                day_string,
+                elev_sel,
+                time_sel,
+                var_plot=var_plot,
+                update_limits=False,
+            )
+            if mesh is None and current_mesh is not None:
+                mesh = current_mesh
+
+    if mesh is None:
+        raise ValueError(f"No valid site data available to draw {var_plot} for {day_string}.")
 
     cbar_y0 = 0.055
     cbar_height = 0.022

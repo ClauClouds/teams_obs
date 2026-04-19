@@ -66,7 +66,7 @@ pattern_legend = {
 # hourly intervals for calculating the diurnal cycle of LWP and IWV
 # set hours to plot and time steps array for single plotting without averages 6,8,10,12,14,16
 hours_diurnal_cycle_calc = ["06:00", "08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]
-azimuth_bins = np.arange(0, 360, 20) # azimuth angle bins of 20 degrees for calculating mean IWV over the azimuth scan for each time selection of the diurnal cycle
+azimuth_bins = np.arange(0, 361, 20) # azimuth bin edges from 0 to 360 degrees inclusive
 
 
 # path fci data

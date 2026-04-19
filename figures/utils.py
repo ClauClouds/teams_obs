@@ -109,6 +109,70 @@ def aggregate_scan_by_azimuth(ds_scan):
     return df_scan
 
 
+def get_shared_colorbar_limits(dataset_paths, data_var, var_plot, symmetric=False, scale_factor=1.0):
+    """Compute one colorbar range across multiple datasets."""
+    value_mins = []
+    value_maxs = []
+
+    for dataset_path in dataset_paths:
+        if not os.path.exists(dataset_path):
+            continue
+
+        with xr.open_dataset(dataset_path) as dataset:
+            if data_var not in dataset:
+                continue
+
+            values = dataset[data_var].values
+
+        if values.size == 0 or np.all(np.isnan(values)):
+            continue
+
+        value_mins.append(float(np.nanmin(values)))
+        value_maxs.append(float(np.nanmax(values)))
+
+    if not value_mins or not value_maxs:
+        colorbar_vmin = float(VAR_DICT[var_plot]['vmin'])
+        colorbar_vmax = float(VAR_DICT[var_plot]['vmax'])
+        return float(np.floor(colorbar_vmin * scale_factor)), float(np.ceil(colorbar_vmax * scale_factor))
+
+    if symmetric:
+        colorbar_limit = max(abs(min(value_mins)), abs(max(value_maxs)))
+        if np.isclose(colorbar_limit, 0.0):
+            colorbar_limit = 0.5
+        colorbar_limit *= scale_factor
+        colorbar_limit = float(np.ceil(colorbar_limit))
+        return -colorbar_limit, colorbar_limit
+
+    colorbar_vmin = float(min(value_mins))
+    colorbar_vmax = float(max(value_maxs))
+    if np.isclose(colorbar_vmin, colorbar_vmax):
+        colorbar_vmin -= 0.5
+        colorbar_vmax += 0.5
+
+    center = 0.5 * (colorbar_vmin + colorbar_vmax)
+    half_range = 0.5 * (colorbar_vmax - colorbar_vmin) * scale_factor
+    colorbar_vmin = center - half_range
+    colorbar_vmax = center + half_range
+
+    return float(np.floor(colorbar_vmin)), float(np.ceil(colorbar_vmax))
+
+
+def get_regular_integer_colorbar_spec(colorbar_vmin, colorbar_vmax, max_tick_count=6):
+    """Return integer colorbar limits and regularly spaced integer ticks."""
+    colorbar_vmin = int(np.floor(colorbar_vmin))
+    colorbar_vmax = int(np.ceil(colorbar_vmax))
+
+    if colorbar_vmin == colorbar_vmax:
+        return colorbar_vmin, colorbar_vmax, np.array([colorbar_vmin], dtype=int)
+
+    tick_step = max(1, int(np.ceil((colorbar_vmax - colorbar_vmin) / max(max_tick_count - 1, 1))))
+    adjusted_vmin = int(np.floor(colorbar_vmin / tick_step) * tick_step)
+    adjusted_vmax = int(np.ceil(colorbar_vmax / tick_step) * tick_step)
+    ticks = np.arange(adjusted_vmin, adjusted_vmax + tick_step, tick_step, dtype=int)
+
+    return adjusted_vmin, adjusted_vmax, ticks
+
+
 def azimuth_to_edges(azimuth_deg):
     """Convert azimuth centers to angular bin edges in radians."""
     if len(azimuth_deg) == 1:
@@ -384,7 +448,6 @@ def find_all_files_for_site(path_root, filename_string, site_name):
             if file.endswith(".nc") and filename_string in file:
                 all_files.append(os.path.join(root, file))
 
-    print(f"Found {len(all_files)} files for site {site_name} in path {path_root}.")
     return all_files, len(all_files)
 
 
@@ -425,5 +488,136 @@ def read_file_list_for_mode(path_root, site_name, mode, iop_conv_days, iop_MoBL_
         file_found_list = [file for file in file_found_list if any(day in file for day in iop_MoBL_T_days)]
     else:
         raise ValueError("mode must be either 'diurnal_cycle', 'convective_days' or 'MOBL_T_days'")
-    
+    print(f"Found {len(file_found_list)} files for site {site_name} and mode {mode} in path {path_root}.")
+
     return file_found_list, N_stat
+
+
+
+def find_closest_dc_value(hour_sel, azimuth_sel, hours_diurnal_cycle_calc, azimuth_bins, dc_var):
+    """script to identify the closest diurnal cycle value for the given time step and azimuth angle values, to calculate the anomaly as the deviation from the diurnal cycle mean value at the same time step and azimuth values
+
+    Args:
+        hour_sel (_type_): selected hour of the time step to find the closest diurnal cycle value for
+        azimuth_sel (_type_): azimuth angle value of the time step to find the closest diurnal cycle value for
+        time_intervals_hours (_type_): array of hours corresponding to the time intervals of the diurnal cycle file
+        azimuth_bins (_type_): array of azimuth bin edges used in the diurnal cycle file
+        dc_var (_type_): array of diurnal cycle values corresponding to the time intervals and azimuth bins of the diurnal cycle file
+    """
+
+    # Convert configured hour strings like "06:00" to integer hours.
+    time_intervals_hours = pd.to_datetime(hours_diurnal_cycle_calc, format="%H:%M").hour.to_numpy()
+
+    # find which time_interval_hours values enclose the selected time_sel hour 
+    dc_hour_sel = np.max(time_intervals_hours[time_intervals_hours <= hour_sel])
+
+    # find index of the time_intervals_hours value corresponding to min_hour_dc
+    dc_hour_sel_index = np.where(time_intervals_hours == dc_hour_sel)[0][0]
+
+    wrapped_azimuth = np.mod(azimuth_sel, 360.0)
+    available_azimuth_bins = min(len(azimuth_bins) - 1, dc_var.shape[1])
+    effective_azimuth_bins = np.asarray(azimuth_bins[:available_azimuth_bins + 1])
+    dc_az_bin_index = np.searchsorted(effective_azimuth_bins, wrapped_azimuth, side="right") - 1
+    dc_az_bin_index = np.clip(dc_az_bin_index, 0, available_azimuth_bins - 1)
+        
+    # read dc values for the enclosing diurnal-cycle hour and azimuth bin
+    dc_sel_value = dc_var[dc_hour_sel_index, dc_az_bin_index]
+    return dc_sel_value
+
+
+def calculate_mean_anomaly_for_time_selection(ds_site, day, hours_diurnal_cycle_calc, azimuth_bins, var_plot):
+    """
+    function to calculate the mean anomaly for each time selection of the diurnal cycle and each azimuth bin, 
+    to be used in the maps of anomalies for the convective days and MoBL_T days modes.
+    Args:
+        ds_site (_type_): xarray dataset containing the data for one site and one day, with the anomaly variable already calculated as the deviation from the diurnal cycle mean value at the same time step and azimuth values
+        day (_type_): string representing the day in the format "YYYYMMDD"
+        hours_diurnal_cycle_calc (_type_): list of hours corresponding to the time intervals of the diurnal cycle calculation
+        azimuth_bins (_type_): array of azimuth bin edges used in the diurnal cycle calculation
+        var_plot (_type_): string representing the variable to plot, which is used to select the correct variable from the ds_site dataset
+          for the calculation of the mean anomaly values
+    Returns:
+        np.ndarray: matrix of mean anomaly values for each time selection of the diurnal cycle and 
+        each azimuth bin of the selected day, with shape (number of time selections, number of azimuth bins - 1)
+    """
+    
+    # define time intervals for the diurnal cycle calculation as strings in the format "YYYY-MM-DDTHH:MM:SS" for each day and each hour of the diurnal cycle calculation
+    interval_starts = [f"{day[:4]}-{day[4:6]}-{day[6:8]}T{hour}:00" for hour in hours_diurnal_cycle_calc]
+    next_day = pd.Timestamp(day) + pd.Timedelta(days=1)
+    interval_ends = interval_starts[1:] + [f"{next_day.strftime('%Y-%m-%d')}T00:00:00"]
+
+    
+    anomaly_dc = np.empty((len(hours_diurnal_cycle_calc), len(azimuth_bins)-1)) # matrix to collect the mean values for each time selection of the diurnal cycle for each day and each azimuth bin
+    anomaly_dc.fill(np.nan) # initialize the anomaly matrix with nans
+    # set hours to plot and time steps array for averaging over intervals  6,8,10,12,14,16
+    for i, time_sel in enumerate(hours_diurnal_cycle_calc):
+
+        # slice dataset for the time selection 
+        ds_time_sel = ds_site.sel(time=slice(interval_starts[i], interval_ends[i]))
+
+
+        if ds_time_sel.sizes.get('time', 0) == 0:
+            print(
+                f"No data available for time selection {interval_starts[i]}-{interval_ends[i]} "
+                f"for day {day}. Leaving that interval as NaN."
+            )
+            continue
+
+        # group by azimuth angle intervals of 20 degrees and calculate mean over the time selection for each azimuth angle
+        try:
+            # select for azimuth in the range 0-360 and group by azimuth angle intervals of 20 degrees and calculate mean over the time selection for each azimuth angle
+            anomaly_dc[i, :] = ds_time_sel.groupby_bins("azimuth_angle", azimuth_bins).mean(dim="time", skipna=True)["anomaly"].values
+        except Exception as e:
+            print(f"Error calculating mean for time selection {interval_starts[i]}-{interval_ends[i]} for day {day}: {e}")
+            print(f"Skipping time selection {time_sel} for day {day}.")
+            print("-------------------------------- --------------------------------")
+            continue
+    return anomaly_dc
+
+
+
+def plot_mean_azimuth_ring(ax, azimuth_edges_deg, values, var_plot, vmin=None, vmax=None, n_color_bins=20):
+    """Plot one mean azimuth ring from pre-aggregated values."""
+    if var_plot == "anomalies":
+        cmap = VAR_DICT["IWV_deviation"]['cmap']
+        if vmin is None:
+            vmin = VAR_DICT["IWV_deviation"]['vmin']
+        if vmax is None:
+            vmax = VAR_DICT["IWV_deviation"]['vmax'] 
+    else:
+        cmap = VAR_DICT[var_plot]['cmap']
+
+        if vmin is None:
+            vmin = VAR_DICT[var_plot]['vmin']
+        if vmax is None:
+            vmax = VAR_DICT[var_plot]['vmax'] 
+
+    color_bounds = np.linspace(vmin, vmax, n_color_bins + 1)
+    cmap = cmap.resampled(n_color_bins)
+    norm = plt.matplotlib.colors.BoundaryNorm(color_bounds, cmap.N, clip=True)
+
+    theta_edges = np.deg2rad(azimuth_edges_deg)
+    theta_grid, radius_grid = np.meshgrid(theta_edges, np.array([0.0, 1.0]))
+
+    mesh = ax.pcolormesh(
+        theta_grid,
+        radius_grid,
+        values[np.newaxis, :],
+        cmap=cmap,
+        norm=norm,
+        shading='flat',
+        edgecolors='white',
+        linewidth=0.6,
+    )
+
+    ax.set_theta_zero_location('N')
+    ax.set_theta_direction(-1)
+    ax.plot(np.linspace(0, 2 * np.pi, 100), np.ones(100), color='black', linewidth=1.0)
+    ax.set_ylim(0, 1.0)
+    ax.set_yticks([])
+    ax.set_xticks(np.deg2rad(np.arange(0, 360, 90)))
+    ax.set_xticklabels(['N', 'E', 'S', 'W'])
+    ax.grid(color='0.8', linewidth=0.6)
+    ax.spines['polar'].set_visible(False)
+
+    return mesh

@@ -85,7 +85,7 @@ def main():
                 output_file_nc = f"data/diurnal_cycle/mean_{mode}_{var_plot}_{site_name}_elev_{elev_sel}.nc"
                 figure_file = f"plots/dc_spatial_{mode}_{var_plot}_{site_name}_elev_{elev_sel}.png"
 
-                if os.path.exists(output_file_nc):            
+                if os.path.exists(output_file_nc):
                     print(f"File {output_file_nc} already exists. Skipping")
                     print("----------------------------------------------------------------")
 
@@ -118,7 +118,7 @@ def main():
 
                         print(f"Processing day {day}...") 
 
-                        # set hours to plot and time steps array for single plotting without averages 6,8,10,12,14,16
+                        # set hours to plot and time steps array for averaging over intervals  6,8,10,12,14,16
                         interval_starts = [f"{day[:4]}-{day[4:6]}-{day[6:8]}T{hour}:00" for hour in interval_start_hours]
                         next_day = pd.Timestamp(day) + pd.Timedelta(days=1)
                         interval_ends = interval_starts[1:] + [f"{next_day.strftime('%Y-%m-%d')}T00:00:00"]
@@ -276,7 +276,7 @@ def main():
 
                     ax.set_title(f"{time_sel} UTC\n{count_label}", fontsize=panel_title_fontsize)
 
-                for ax in axes[len(hours_diurnal_cycle_calc[:-1]):]:
+                for ax in axes[len(hours_diurnal_cycle_calc):]:
                     ax.set_axis_off()
 
 

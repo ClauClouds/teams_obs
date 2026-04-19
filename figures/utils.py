@@ -428,7 +428,7 @@ def make_video_from_frames(input_framerate, output_prefix, output_dir, target_du
     return None
 
 
-def find_all_files_for_site(path_root, filename_string, site_name):
+def find_all_files_for_site(path_root, filename_string, site_name, file_ending):
     """
     function to find all files witha given string in all subdirectories of a given root path
 
@@ -445,7 +445,7 @@ def find_all_files_for_site(path_root, filename_string, site_name):
     all_files = []
     for root, dirs, files in os.walk(path_root):
         for file in files:
-            if file.endswith(".nc") and filename_string in file:
+            if file.endswith(file_ending) and filename_string in file:
                 all_files.append(os.path.join(root, file))
 
     return all_files, len(all_files)

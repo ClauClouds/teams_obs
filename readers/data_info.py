@@ -3,6 +3,7 @@ file containing the paths to the data files, directories, and output paths for t
 """
 import numpy as np
 
+from pathlib import Path
 
 # TWV data from MTG FCI provided by Cintia Carbajßl
 path_twv = "/Users/claudia/Documents/Data/TWV_MTG_Alps/"
@@ -70,4 +71,15 @@ azimuth_bins = np.arange(0, 361, 20) # azimuth bin edges from 0 to 360 degrees i
 
 
 # path fci data
-fci_path = "/data/trade_pc/mtg/fci/processed/no_parallax/original_grid/2025"
+fci_path = "/data/trade_pc/mtg/fci/2025/processed/no_parallax/original_grid/2025"
+
+# coordinate filepath for MTG channels
+coords_file_path = Path('/data/trade_pc/mtg/fci/')
+
+
+
+domain_expats       =  [ 5.,   16.,    42.,   51.5 ] # minlon, maxlon, minlat, maxlat
+domain_joyce        =  [ 6.,   6.5,    50.8,  51.3 ] # minlon, maxlon, minlat, maxlat   
+domain_ACTA         =  [ 10.73,12.0,   46.3,  47.2 ] # minlon, maxlon, minlat, maxlat
+domain_TEAMX      =  [ 9.9,   12.7,    45.5,   47.4  ] # minlon, maxlon, minlat, maxlat
+domain = domain_ACTA

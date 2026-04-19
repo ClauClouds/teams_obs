@@ -31,7 +31,7 @@ def main():
     elevs = [10, 20, 30] # elevation angles to plot the diurnal cycle for, other options are 10, 20, 30,
     vars2plot = ["iwv", "IWV_deviation"] # other options are "lwp" and "IWV_deviation"
     sites = ["lagonero", "collalbo", "bolzano"] # sites to plot the insets for, other options are "bolzano" and "collalbo"
-    mode = "MOBL_T_days"# "convective_days" # other option is "MOBL_T"
+    mode = "convective_days" # other option is ""MOBL_T_days"# "
     iwv_colorbar_scale_factor = 1.25
     dc_hours = np.array([pd.to_datetime(hour, format="%H:%M").hour for hour in hours_diurnal_cycle_calc]) # array of the hours of the diurnal cycle to plot
     # loop on elevation angles, variables to plot and sites
@@ -115,6 +115,7 @@ def main():
                     # calculate mean anomaly over the selected time selections and azimuth bins
                     anomaly_dc_matrix[i_file, :, :] = calculate_mean_anomaly_for_time_selection(ds_site, day, hours_diurnal_cycle_calc, azimuth_bins, var_plot) # calculate the mean anomaly for each time selection of the diurnal cycle and each azimuth bin and add it to the matrix
                 mean_anomaly = np.nanmean(anomaly_dc_matrix, axis=0)
+                count_days = np.sum(~np.isnan(anomaly_dc_matrix), axis=0).astype(int)
                 print(
                     f"Finished {site_name}, {var_plot}, {elev_sel}deg. "
                     f"Mean anomaly matrix shape: {mean_anomaly.shape}"
@@ -123,7 +124,8 @@ def main():
                 # store mean anomaly in a new netcdf file
                 ds_mean_anomaly = xr.Dataset(
                     {
-                        "mean_anomaly": (("hour", "azimuth_bin"), mean_anomaly)
+                        "mean_anomaly": (("hour", "azimuth_bin"), mean_anomaly),
+                        "count_days": (("hour", "azimuth_bin"), count_days),
                     },  
                     coords={
                         "hour": hours_diurnal_cycle_calc,
@@ -182,7 +184,6 @@ def main():
                 for i, time_sel in enumerate(hours_diurnal_cycle_calc):
                     ax = axes[i]
                     mean_values = ds_mean_anomaly.mean_anomaly.sel(hour=time_sel).values
-                    count_values = ds_mean_anomaly.mean_anomaly.sel(hour=time_sel).values
                     ax.tick_params(axis='x', labelsize=direction_label_fontsize)
 
                     mesh = plot_mean_azimuth_ring(
@@ -194,15 +195,7 @@ def main():
                         vmax=colorbar_vmax,
                     )
 
-                    positive_counts = count_values[count_values > 0]
-                    if len(positive_counts) == 0:
-                        count_label = "N=0"
-                    elif np.all(positive_counts == positive_counts[0]):
-                        count_label = f"N={int(positive_counts[0])}"
-                    else:
-                        count_label = f"N={int(np.nanmin(positive_counts))}-{int(np.nanmax(positive_counts))}"
-
-                    ax.set_title(f"{time_sel} UTC\n{count_label}", fontsize=panel_title_fontsize)
+                    ax.set_title(f"{time_sel} UTC", fontsize=panel_title_fontsize)
 
                 for ax in axes[len(hours_diurnal_cycle_calc):]:
                     ax.set_axis_off()

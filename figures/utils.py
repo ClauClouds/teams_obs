@@ -621,3 +621,59 @@ def plot_mean_azimuth_ring(ax, azimuth_edges_deg, values, var_plot, vmin=None, v
     ax.spines['polar'].set_visible(False)
 
     return mesh
+
+
+
+
+
+def plot_teamx_sites(ax, color, symbol_size, label_fontsize=5):
+    """
+    Function to plot instrument positions on a map for the quicklook browser.
+    Parameters
+    ----------
+    ax : cartopy axes
+        The axes on which to plot the instrument positions.
+    color : str
+        The color of the instrument positions.
+    symbol_size : int
+        The size of the symbols used to represent the instrument positions.
+    Returns
+    -------
+        None
+        """       
+    #add instrument positions for the quicklook browser
+    # define a dictionary with coordinates of the sites, site names
+    dict_towns = {
+        #'Branzol': [46.4031302, 11.32243],
+        #'Brixen': [46.71042, 11.65246],
+        #'Dornacherof':[46.49978, 11.43554], 
+        #'Ehrenburg': [46.79559, 11.83649],
+        #'Felthuner hutte': [46.60479, 11.45674],
+        #'Garganzone':[46.58495, 11.20144], 
+        'Klobenstein':[46.53965, 11.45832], 
+        #'Meran':[46.67114, 11.15257], 
+        #'Naturns':[46.64995, 11.00418], 
+        #'Plose': [46.69555, 11.73333],
+        #'Rittenhorn': [46.61499, 11.46083],
+        #'Sarnthein': [46.6427, 11.35729],
+        'Schwarzseespitze': [46.59605, 11.45255], 
+        #'Sterzing':[46.89633, 11.43214],
+        #'St Martin':[46.78353, 11.22874]}
+        'Bozen':[46.49829, 11.35479]}
+    # loop on dictionary items for plotting scatter points
+    for site, coords in dict_towns.items():
+        lat, lon = coords
+        ax.scatter(lon, lat, marker='x', color=color, s=symbol_size, transform=ccrs.PlateCarree())
+        ax.text(
+            lon + 0.01,
+            lat - 0.01,
+            site,
+            color=color,
+            transform=ccrs.PlateCarree(),
+            ha='left',
+            va='top',
+            fontsize=label_fontsize,
+        )
+        
+
+    return

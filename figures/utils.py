@@ -444,6 +444,7 @@ def find_all_files_for_site(path_root, filename_string, site_name, file_ending):
 
     all_files = []
     for root, dirs, files in os.walk(path_root):
+        print(files)
         for file in files:
             if file.endswith(file_ending) and filename_string in file:
                 all_files.append(os.path.join(root, file))

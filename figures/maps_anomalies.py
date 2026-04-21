@@ -28,12 +28,12 @@ import pdb
 
 def main():
 
-    elevs = [10, 20, 30] # elevation angles to plot the diurnal cycle for, other options are 10, 20, 30,
+    elevs = [30]#[10, 20, 30] # elevation angles to plot the diurnal cycle for, other options are 10, 20, 30,
     vars2plot = ["iwv", "IWV_deviation"] # other options are "lwp" and "IWV_deviation"
     sites = ["lagonero", "collalbo", "bolzano"] # sites to plot the insets for, other options are "bolzano" and "collalbo"
     mode = "convective_days" # other option is ""MOBL_T_days"# "
     iwv_colorbar_scale_factor = 1.25
-    dc_hours = np.array([pd.to_datetime(hour, format="%H:%M").hour for hour in hours_diurnal_cycle_calc]) # array of the hours of the diurnal cycle to plot
+    dc_hours = np.array([pd.to_datetime(hour, format="%H:%M").hour for hour in hours_diurnal_cycle_calc[3:]]) # array of the hours of the diurnal cycle to plot
     # loop on elevation angles, variables to plot and sites
     for elev_sel in elevs:
         for var_plot in vars2plot:
@@ -71,7 +71,7 @@ def main():
 
                 # loop on all iop days of the mode and plot the anomalies for each day
                 # create empty matrices of nans to collect the mean values for each time selection of the diurnal cycle for each day
-                anomaly_dc_matrix = np.empty((len(file_found_list), len(hours_diurnal_cycle_calc), len(azimuth_bins)-1)) # matrix to collect the mean values for each time selection of the diurnal cycle for each day and each azimuth bin
+                anomaly_dc_matrix = np.empty((len(file_found_list), len(hours_diurnal_cycle_calc[3:]), len(azimuth_bins)-1)) # matrix to collect the mean values for each time selection of the diurnal cycle for each day and each azimuth bin
                 anomaly_dc_matrix.fill(np.nan) # matrix to collect the mean values for each time selection of the diurnal cycle for each day
 
                 # loop on iop mode days 
@@ -104,7 +104,7 @@ def main():
                         hour_sel = pd.to_datetime(time_sel).hour
 
                         # find the closest diurnal cycle hour and azimuth bin to the selected time step and azimuth value
-                        dc_sel_value = find_closest_dc_value(hour_sel, azimuth_sel, hours_diurnal_cycle_calc, azimuth_bins, dc_var)
+                        dc_sel_value = find_closest_dc_value(hour_sel, azimuth_sel, hours_diurnal_cycle_calc[3:], azimuth_bins, dc_var)
 
                         # calculate anomaly as the deviation from the diurnal cycle mean value at the same time step and azimuth values
                         anomaly[i_time] = var_sel - dc_sel_value # calculate the anomaly as the deviation from the diurnal cycle mean value at the same time step and azimuth values
@@ -113,7 +113,7 @@ def main():
                     ds_site["anomaly"] = (("time"), anomaly)    
 
                     # calculate mean anomaly over the selected time selections and azimuth bins
-                    anomaly_dc_matrix[i_file, :, :] = calculate_mean_anomaly_for_time_selection(ds_site, day, hours_diurnal_cycle_calc, azimuth_bins, var_plot) # calculate the mean anomaly for each time selection of the diurnal cycle and each azimuth bin and add it to the matrix
+                    anomaly_dc_matrix[i_file, :, :] = calculate_mean_anomaly_for_time_selection(ds_site, day, hours_diurnal_cycle_calc[3:], azimuth_bins, var_plot) # calculate the mean anomaly for each time selection of the diurnal cycle and each azimuth bin and add it to the matrix
                 mean_anomaly = np.nanmean(anomaly_dc_matrix, axis=0)
                 count_days = np.sum(~np.isnan(anomaly_dc_matrix), axis=0).astype(int)
                 print(
@@ -128,7 +128,7 @@ def main():
                         "count_days": (("hour", "azimuth_bin"), count_days),
                     },  
                     coords={
-                        "hour": hours_diurnal_cycle_calc,
+                        "hour": hours_diurnal_cycle_calc[3:],
                         "azimuth_bin": azimuth_bins[:-1] + np.diff(azimuth_bins)/2 # calculate the center of the azimuth bins
                     }
                 )
@@ -165,23 +165,23 @@ def main():
                     continue
 
                 print(f"Plotting mean anomaly for site {site_name}, variable {var_plot}, elevation {elev_sel}°.")
-                figure_file = f"plots/anomalies_spatial_{mode}_{var_plot}_{site_name}_elev_{elev_sel}.png"
+                figure_file = f"plots/poster_plots/anomalies_spatial_{mode}_{var_plot}_{site_name}_elev_{elev_sel}.png"
                 plot_output_path = f"/home/cacquist/Documents/GitHub/EXPATS/teams_obs/" + figure_file
                 os.makedirs(os.path.dirname(plot_output_path), exist_ok=True)
 
                 ds_mean_anomaly = xr.open_dataset(input_path)
-                panel_title_fontsize = 16
-                direction_label_fontsize = 16
-                colorbar_label_fontsize = 16
-                colorbar_tick_fontsize = 14
-                suptitle_fontsize = 20
+                panel_title_fontsize = 22
+                direction_label_fontsize = 22
+                colorbar_label_fontsize = 22
+                colorbar_tick_fontsize = 22
+                suptitle_fontsize = 22
 
                 fig, axes = plt.subplots(3, 3, figsize=(15, 15), subplot_kw={'projection': 'polar'})
                 axes = axes.flatten()
                 mesh = None
                 azimuth_edges = azimuth_bins
 
-                for i, time_sel in enumerate(hours_diurnal_cycle_calc):
+                for i, time_sel in enumerate(hours_diurnal_cycle_calc[3:]):
                     ax = axes[i]
                     mean_values = ds_mean_anomaly.mean_anomaly.sel(hour=time_sel).values
                     ax.tick_params(axis='x', labelsize=direction_label_fontsize)
@@ -195,9 +195,10 @@ def main():
                         vmax=colorbar_vmax,
                     )
 
-                    ax.set_title(f"{time_sel} UTC", fontsize=panel_title_fontsize)
+                    # position the title at the left of the subplot in line with N direction
+                    ax.set_title(f"{time_sel} UTC", fontsize=panel_title_fontsize, loc='left')
 
-                for ax in axes[len(hours_diurnal_cycle_calc):]:
+                for ax in axes[len(hours_diurnal_cycle_calc[3:]):]:
                     ax.set_axis_off()
 
                 fig.subplots_adjust(left=0.06, right=0.86, bottom=0.06, top=0.90, wspace=0.28, hspace=0.30)
@@ -209,7 +210,8 @@ def main():
                     cbar.set_ticks(colorbar_ticks)
                     cbar.ax.tick_params(labelsize=colorbar_tick_fontsize)
 
-                plt.suptitle(f"Mean anomaly of {VAR_DICT[var_plot]['label']} - {PLOT_SITES_NAMES[site_name]} - {elev_sel}° elev - {mode.replace('_', ' ').title()}", fontsize=suptitle_fontsize)
+                # in bold, add a suptitle with the variable name, site name, elevation angle and mode of days plotted
+                plt.suptitle(f"Mean anomaly of {VAR_DICT[var_plot]['label']} - {PLOT_SITES_NAMES[site_name]} - {elev_sel}° elev - {mode.replace('_', ' ').title()}", fontsize=suptitle_fontsize, fontweight='bold')
                 plt.savefig(plot_output_path)
                 plt.close(fig)
                 ds_mean_anomaly.close()

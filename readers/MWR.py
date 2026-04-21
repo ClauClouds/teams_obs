@@ -49,8 +49,11 @@ def read_MWR_flags(site, date):
     path_global = path_root + yy + '/' + mm + '/' + dd + '/'
     filename = path_global + 'MWR_1C01_'+site+'_'+date+'.nc'
     
-    ds = xr.open_dataset(filename)
-    
+    try:
+        ds = xr.open_dataset(filename)
+    except Exception as e:
+        print(f"Error reading MWR flags from {filename}: {e}")
+        return None 
     # read rain rate variable
     rain_rate = ds['rainfall_rate'].values
     
@@ -61,7 +64,8 @@ def read_MWR_flags(site, date):
     ind_rain = np.where(rain_rate > 0.)[0]
     rain_flag[ind_rain] = 1
 
-    time = ds.time.values
+    # convert time in a format that can be used as coordinate in xarray dataset
+    time = pd.to_datetime(ds.time.values)
     
     # create an output dataset with time as coordinate
     ds = xr.Dataset(

@@ -37,14 +37,16 @@ def main():
     path_mrr = f"/data/campaigns/teamx/{site_selected}/mrr/l1/"
 
     # time stamps to plot to understand the interferences
-    time_stamps = ["20250623T12:00:00","20250623T14:45:00"]
+    time_stamps = ["20250701T14:40:00","20250701T17:45:00"]
     date_selected = time_stamps[0][:8]
 
     # read the MRR data for the selected site and day and store in a dataset
-    ds_mrr = read_mrr_data(path_mrr, site_selected, time_stamps[0])
+    ds_mrr = read_mrr_data(path_mrr, site_selected, date_selected)
 
     # apply the function to filter interference to every time step in the dataset
     ds_mrr_filtered = filter_interference_in_mrr(ds_mrr)
+    print(ds_mrr_filtered)
+    pdb.set_trace()
 
     # plot radar reflectivity as a function of height for the entire day
     Ze = ds_mrr_filtered.Ze.values
@@ -67,7 +69,7 @@ def main():
 
     # plot height spectrogram at selected time stamps
     for time_stamp in time_stamps:
-        plot_mrr_spectrogram(ds_mrr_filtered.sel(time=time_stamp))
+        plot_mrr_spectrogram(ds_mrr_filtered.sel(time=time_stamp, method='nearest'))
 
 def filter_interference_in_mrr(ds_mrr):
     """
@@ -92,25 +94,41 @@ def filter_interference_in_mrr(ds_mrr):
     output:
     - ds_mrr_filtered: dataset containing the MRR data for the selected site and day after filtering the interference
     """
+    # define cable car starting and ending clock times
+    start_hour = 7
+    start_minute = 0
+    end_hour = 15
+    end_minute = 30
 
-    # first crop time stamps between 7 UTC and 15:30 UTC
-    ds_mrr = ds_mrr.sel(time=slice("2025-06-23T07:00:00", "2025-06-23T15:30:00"))
-    
-    # add variable flag with dimension (time, height) to indicate if the echo is fragmented (interference) or coherent (precipitation)
-    ds_mrr = ds_mrr.assign(interf_flag=(("time", "range"), np.full((ds_mrr.sizes["time"], ds_mrr.sizes["range"]), False, dtype=bool)))
+    # get the processed day from the dataset itself
+    day_string = pd.to_datetime(ds_mrr.time.values[0]).strftime("%Y-%m-%d")
 
-    # then loop over the time steps and apply the function to filter interference to every time step in the dataset
-    for ind_time, time in enumerate(ds_mrr.time.values):
-        ds_mrr_sel = ds_mrr.sel(time=time)
+    # build full timestamps for that day
+    cable_car_start = np.datetime64(f"{day_string}T{start_hour:02d}:{start_minute:02d}:00")
+    cable_car_end = np.datetime64(f"{day_string}T{end_hour:02d}:{end_minute:02d}:00")
+
+    print(f"Filtering interference in MRR data between {cable_car_start} and {cable_car_end}")
+
+    # Keep the full day dataset and only modify the cable car time window.
+    ds_mrr_filtered = ds_mrr.copy()
+    ds_mrr_filtered = ds_mrr_filtered.assign(
+        interf_flag=(("time", "range"), np.full((ds_mrr_filtered.sizes["time"], ds_mrr_filtered.sizes["range"]), False, dtype=bool))
+    )
+
+    ds_mrr_window = ds_mrr_filtered.sel(time=slice(cable_car_start, cable_car_end))
+
+    # Apply the interference filter only inside the cable car time window.
+    for time_value in ds_mrr_window.time.values:
+        ds_mrr_sel = ds_mrr_filtered.sel(time=time_value)
         eta_dbz = ds_mrr_sel.eta.values
         eta_dbz_filtered, interf_flag = filter_interference(eta_dbz)
-        ds_mrr.eta.values[ind_time, :] = eta_dbz_filtered
-        ds_mrr.interf_flag.values[ind_time, :] = np.repeat(interf_flag, ds_mrr_sel.height.size)
 
-    # reconstruct the ds for the entire day by concatenating the filtered dataset with the unfiltered dataset for the time stamps outside of 7 UTC and 15:30 UTC
-    ds_mrr_before = ds_mrr.sel(time=slice(None, "2025-06-23T07:00:00"))
-    ds_mrr_after = ds_mrr.sel(time=slice("2025-06-23T15:30:00", None))
-    ds_mrr_filtered = xr.concat([ds_mrr_before, ds_mrr, ds_mrr_after], dim="time")
+        ds_mrr_filtered["eta"].loc[dict(time=time_value)] = eta_dbz_filtered
+        ds_mrr_filtered["interf_flag"].loc[dict(time=time_value)] = np.full(
+            ds_mrr_filtered.sizes["range"],
+            interf_flag,
+            dtype=bool,
+        )
 
     # apply vertical continuity filter to the Ze profiles in the dataset
     Ze = ds_mrr_filtered.Ze.values
@@ -128,8 +146,8 @@ def filter_interference_in_mrr(ds_mrr):
 
 def filter_interference(eta_dbz):
     """
-    the function is filtering the interfence patterns in the Doppler spectra by applying 2 methods:
-    1) it exploits connected component size: counts the number of connected areas and then it compared
+    the function is filtering the interfence patterns in the Doppler spectra by exploiting
+     connected component size: counts the number of connected areas and then it compared
     with a given threshold to decide if the echo is fragmented (interference) or coherent (precipitation)
     The code then returns:
     - the original dataset without filtering if the echo is coherent
@@ -137,9 +155,10 @@ def filter_interference(eta_dbz):
     - a flag to indicate if the echo is fragmented or coherent
 
     input:
-    - eta_dbz: array containing the Doppler spectra in dBZ (doppler, height) etxracted at a given time step from the MRR dataset
+    - eta_dbz: array containing the profile of Doppler spectras in dBZ (doppler, height) etxracted at a 
+    given time step from the MRR dataset
     output:
-    - eta_dbz_filtered: array containing the Doppler spectra in dBZ after filtering the interference
+    - eta_dbz_filtered: array (doppler, height) containing the Doppler spectra in dBZ after filtering the interference
     - interf_flag: boolean flag indicating if the echo is fragmented (True) or coherent (False)
     """
     from scipy.ndimage import label
@@ -149,7 +168,7 @@ def filter_interference(eta_dbz):
     
     # apply connected component labeling to the mask
     labels, nlab = label(mask)
-    print(f"Number of connected components: {nlab}")
+    #print(f"Number of connected components: {nlab}")
 
     # set a threshold for the size of the connected components to be considered as interference patterns
     size_threshold = 5
@@ -159,11 +178,11 @@ def filter_interference(eta_dbz):
 
     # check on the number of connected components
     if nlab > size_threshold:
-        print("fragmented echo", "largest connected component size: ", largest_size, "threshold: ", size_threshold)
+        #print("fragmented echo", "largest connected component size: ", largest_size, "threshold: ", size_threshold)
         # return eta equal to nan everywhere 
         return np.full_like(eta_dbz, np.nan), True
     else:
-        print("coherent echo", "largest connected component size: ", largest_size, "threshold: ", size_threshold)
+        #print("coherent echo", "largest connected component size: ", largest_size, "threshold: ", size_threshold)
         # return the original dataset without filtering
         return eta_dbz, False
 
@@ -344,6 +363,10 @@ def read_mrr_data(path_mrr, site_selected, date_selected):
     # read the NetCDF file using xarray
     ds_mrr = xr.open_dataset(file_mrr)
 
+    # remove the unzipped file to save space
+    if os.path.exists(file_mrr) and file_mrr.endswith('.nc'):
+        os.remove(file_mrr) 
+        
     return ds_mrr
 
 def find_file_mrr(path_mrr, site_selected, date_selected):

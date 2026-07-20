@@ -76,11 +76,19 @@ into the dataset variables.
 
 Note: filtering currently valid for data from 20250626 onwards. Before different ranges setup, need to change threhsolds
 
+how to run:
+source .teams_venv/bin/activate
+.teams_venv/bin/python -m py_compile process/remove_interfence_mrr.py
+python process/remove_interfence_mrr.py --config process/remove_interfence_mrr_config.yaml
+
 """
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
+from pathlib import Path
+import ast
 import numpy as np
 from datetime import time
 import site
@@ -131,6 +139,362 @@ class UpperInterferenceResult:
     evidence: np.ndarray
     cutoff_index: int | None
     cutoff_height: float | None
+
+
+@dataclass(frozen=True)
+class MRRInterferenceConfig:
+    """Runtime settings for the MRR interference filtering script."""
+
+    sites: list[str]
+    site_selected: str
+    path_mrr: str
+    time_stamps: list[str]
+    remove_interference: bool
+    filter_RR_on: bool
+    make_plots: bool
+    min_interference_extent_factor: float
+    min_interference_layer_fraction: float
+    interference_min_lowest_echo_height: float
+    min_interference_time_profiles: int
+    min_lower_echo_time_profiles: int
+    min_elevated_connected_gates: int
+    min_lower_echo_connected_gates: int
+    max_interference_missing_gates: int
+    max_rain_column_missing_gates: int
+    lower_echo_height_limit: float
+    min_lower_echo_peak_ze: float
+    min_lower_continuous_ze_gates: int
+    use_mwr_rain_flag: bool
+    allow_missing_mwr_rain_flag: bool
+    mwr_reindex_tolerance: str
+    rain_extension: str
+    interference_start: time
+    interference_end: time
+    save_filtered_dataset: bool
+    output_dir: str
+    output_file_template: str
+    output_compression_level: int
+    output_overwrite: bool
+    calculate_uncertainty: bool
+    campaign_start_date: str | None
+    campaign_end_date: str | None
+    campaign_start_datetime: str | None
+    campaign_end_datetime: str | None
+    campaign_dates: list[str]
+    config_path: str
+
+
+def _strip_yaml_comment(line: str) -> str:
+    in_single_quote = False
+    in_double_quote = False
+    for index, char in enumerate(line):
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif char == '\"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        elif char == "#" and not in_single_quote and not in_double_quote:
+            return line[:index]
+    return line
+
+
+def _parse_yaml_scalar(value: str):
+    value = value.strip()
+    lower_value = value.lower()
+    if lower_value == "true":
+        return True
+    if lower_value == "false":
+        return False
+    if lower_value in {"null", "none", "~"}:
+        return None
+    if value.startswith(("'", '\"', "[")):
+        return ast.literal_eval(value)
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def _read_simple_yaml(config_path: Path) -> dict:
+    config: dict = {}
+    stack: list[tuple[int, dict]] = [(-1, config)]
+
+    for line_number, raw_line in enumerate(config_path.read_text().splitlines(), start=1):
+        line = _strip_yaml_comment(raw_line).rstrip()
+        if not line.strip():
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+        key, separator, value = stripped.partition(":")
+        if not separator:
+            raise ValueError(f"Invalid YAML line {line_number} in {config_path}: {raw_line}")
+
+        while indent <= stack[-1][0]:
+            stack.pop()
+
+        current_mapping = stack[-1][1]
+        key = key.strip()
+        value = value.strip()
+        if value:
+            current_mapping[key] = _parse_yaml_scalar(value)
+        else:
+            nested_mapping: dict = {}
+            current_mapping[key] = nested_mapping
+            stack.append((indent, nested_mapping))
+
+    return config
+
+
+def load_mrr_interference_config(config_path: str | Path) -> MRRInterferenceConfig:
+    """Read the YAML config used by this script."""
+    config_path = Path(config_path)
+    raw_config = _read_simple_yaml(config_path)
+
+    campaign_config = raw_config.get("campaign", {})
+    output_config = raw_config.get("output", {})
+    processing_config = raw_config.get("processing", {})
+
+    sites_config = raw_config.get("sites")
+    site_selected = campaign_config.get("site")
+    if site_selected is None:
+        dataset_config = raw_config.get("datasets", raw_config)
+        site_selected = dataset_config["site_selected"]
+    else:
+        dataset_config = raw_config.get("datasets", {})
+
+    if isinstance(sites_config, dict) and site_selected in sites_config:
+        site_config = sites_config[site_selected]
+        sites = list(sites_config)
+        path_mrr = site_config.get("path_mrr")
+        if path_mrr is None:
+            path_mrr = site_config["path_mrr_template"].format(
+                site=site_selected,
+                site_selected=site_selected,
+            )
+        filtering_config = site_config.get("filtering", {})
+        rain_flag_config = site_config.get("rain_flag_config", {})
+        window_config = site_config.get("interference_window") or site_config.get("interference_windows")
+    else:
+        dataset_config = raw_config.get("datasets", raw_config)
+        sites = list(dataset_config["sites"])
+        path_mrr = dataset_config.get("path_mrr")
+        if path_mrr is None:
+            path_mrr = dataset_config["path_mrr_template"].format(site_selected=site_selected)
+        filtering_config = raw_config.get(f"filtering_setup_{site_selected}")
+        if filtering_config is None:
+            filtering_config = raw_config.get("filtering_setup", raw_config)
+        rain_flag_config = raw_config.get("rain_flag_config", raw_config)
+        window_config = raw_config.get("interference_windows", {}).get(site_selected)
+
+    if not window_config:
+        raise ValueError(
+            f"No interference window configured for site '{site_selected}' in {config_path}"
+        )
+
+    time_stamps = list(raw_config.get("time_stamps", []))
+
+    return MRRInterferenceConfig(
+        sites=sites,
+        site_selected=site_selected,
+        path_mrr=path_mrr,
+        time_stamps=time_stamps,
+        remove_interference=bool(processing_config.get("remove_interference", True)),
+        filter_RR_on=bool(filtering_config["filter_RR_on"]),
+        make_plots=bool(processing_config.get("make_plots", True)),
+        min_interference_extent_factor=float(filtering_config["min_interference_extent_factor"]),
+        min_interference_layer_fraction=float(filtering_config["min_interference_layer_fraction"]),
+        interference_min_lowest_echo_height=float(filtering_config["interference_min_lowest_echo_height"]),
+        min_interference_time_profiles=int(filtering_config["min_interference_time_profiles"]),
+        min_lower_echo_time_profiles=int(filtering_config["min_lower_echo_time_profiles"]),
+        min_elevated_connected_gates=int(filtering_config["min_elevated_connected_gates"]),
+        min_lower_echo_connected_gates=int(filtering_config["min_lower_echo_connected_gates"]),
+        max_interference_missing_gates=int(filtering_config["max_interference_missing_gates"]),
+        max_rain_column_missing_gates=int(filtering_config["max_rain_column_missing_gates"]),
+        lower_echo_height_limit=float(filtering_config["lower_echo_height_limit"]),
+        min_lower_echo_peak_ze=float(filtering_config["min_lower_echo_peak_ze"]),
+        min_lower_continuous_ze_gates=int(filtering_config["min_lower_continuous_ze_gates"]),
+        use_mwr_rain_flag=bool(rain_flag_config.get("use_mwr_rain_flag", True)),
+        allow_missing_mwr_rain_flag=bool(rain_flag_config.get("allow_missing_mwr_rain_flag", True)),
+        mwr_reindex_tolerance=rain_flag_config["mwr_reindex_tolerance"],
+        rain_extension=rain_flag_config["rain_extension"],
+        interference_start=time.fromisoformat(window_config["start"]),
+        interference_end=time.fromisoformat(window_config["end"]),
+        save_filtered_dataset=bool(output_config.get("save_filtered_dataset", True)),
+        output_dir=output_config.get("output_dir", "data/mrr_filtered").format(
+            site=site_selected,
+            site_selected=site_selected,
+        ),
+        output_file_template=output_config.get(
+            "output_file_template",
+            "{date_selected}_{site_selected}_mrr_interference_filtered.nc",
+        ),
+        output_compression_level=int(output_config.get("compression_level", 9)),
+        output_overwrite=bool(output_config.get("overwrite", True)),
+        calculate_uncertainty=bool(processing_config.get("calculate_uncertainty", False)),
+        campaign_start_date=campaign_config.get("start_date"),
+        campaign_end_date=campaign_config.get("end_date"),
+        campaign_start_datetime=campaign_config.get("start_datetime"),
+        campaign_end_datetime=campaign_config.get("end_datetime"),
+        campaign_dates=list(campaign_config.get("dates", [])),
+        config_path=str(config_path),
+    )
+
+
+PROFILE_MASK_SKIP_VARS = {
+    "height",
+    "range",
+    "lat",
+    "lon",
+    "latitude",
+    "longitude",
+    "altitude",
+    "time",
+    "rain_flag",
+}
+
+
+def apply_range_gate_mask_to_profile(
+    ds: xr.Dataset,
+    time_stamp,
+    gate_mask: np.ndarray,
+    *,
+    skip_vars: set[str] = PROFILE_MASK_SKIP_VARS,
+) -> None:
+    """Mask selected range gates for all time/range data variables in-place."""
+    gate_mask = np.asarray(gate_mask, dtype=bool)
+
+    for var_name, data_array in ds.data_vars.items():
+        if var_name in skip_vars:
+            continue
+        if "time" not in data_array.dims or "range" not in data_array.dims:
+            continue
+
+        profile = data_array.sel(time=time_stamp)
+        if gate_mask.size != profile.sizes["range"]:
+            raise ValueError(
+                f"Gate mask has {gate_mask.size} gates, but {var_name} has "
+                f"{profile.sizes['range']} range gates."
+            )
+
+        keep_gates = xr.DataArray(
+            ~gate_mask,
+            coords={"range": profile["range"]},
+            dims=("range",),
+        )
+        ds[var_name].loc[dict(time=time_stamp)] = profile.where(keep_gates)
+
+
+def add_postprocessing_metadata(
+    ds: xr.Dataset,
+    *,
+    config: MRRInterferenceConfig,
+    date_selected: str,
+) -> xr.Dataset:
+    """Add postprocessing metadata to the filtered output dataset."""
+    ds = ds.copy()
+    timestamp_utc = pd.Timestamp.now(tz="UTC").isoformat()
+    history_entry = (
+        f"{timestamp_utc}: MRR interference postprocessing applied with "
+        f"process/remove_interfence_mrr.py using config {config.config_path}."
+    )
+    previous_history = ds.attrs.get("history")
+    ds.attrs["history"] = (
+        f"{previous_history}\n{history_entry}" if previous_history else history_entry
+    )
+    ds.attrs.update(
+        {
+            "postprocessing_name": "MRR interference filtering",
+            "postprocessing_description": (
+                "Interference-like MRR range gates were identified from Ze/W profile "
+                "structure and masked across all data variables with time and range dimensions."
+            ),
+            "postprocessing_script": "https://github.com/ClauClouds/teams_obs/blob/main/process/remove_interfence_mrr.py",
+            "postprocessing_config": config.config_path,
+            "postprocessing_site": config.site_selected,
+            "postprocessing_date": date_selected,
+            "postprocessing_time_stamps": ",".join(config.time_stamps),
+            "postprocessing_filter_RR_on": str(config.filter_RR_on),
+            "postprocessing_use_mwr_rain_flag": str(config.use_mwr_rain_flag),
+            "postprocessing_allow_missing_mwr_rain_flag": str(config.allow_missing_mwr_rain_flag),
+            "postprocessing_interference_window": (
+                f"{config.interference_start.isoformat()}-{config.interference_end.isoformat()}"
+            ),
+            "postprocessing_min_interference_extent_factor": config.min_interference_extent_factor,
+            "postprocessing_min_interference_layer_fraction": config.min_interference_layer_fraction,
+            "postprocessing_interference_min_lowest_echo_height_m": (
+                config.interference_min_lowest_echo_height
+            ),
+            "postprocessing_min_interference_time_profiles": config.min_interference_time_profiles,
+            "postprocessing_min_lower_echo_time_profiles": config.min_lower_echo_time_profiles,
+            "postprocessing_min_elevated_connected_gates": config.min_elevated_connected_gates,
+            "postprocessing_min_lower_echo_connected_gates": config.min_lower_echo_connected_gates,
+            "postprocessing_max_interference_missing_gates": config.max_interference_missing_gates,
+            "postprocessing_max_rain_column_missing_gates": config.max_rain_column_missing_gates,
+            "postprocessing_lower_echo_height_limit_m": config.lower_echo_height_limit,
+            "postprocessing_min_lower_echo_peak_ze_dbz": config.min_lower_echo_peak_ze,
+            "postprocessing_min_lower_continuous_ze_gates": config.min_lower_continuous_ze_gates,
+            "postprocessing_mwr_reindex_tolerance": config.mwr_reindex_tolerance,
+            "postprocessing_rain_extension": config.rain_extension,
+            "postprocessing_masked_variable_rule": (
+                "All data variables with both time and range dimensions were masked; "
+                f"skipped variables: {','.join(sorted(PROFILE_MASK_SKIP_VARS))}."
+            ),
+            "postprocessing_output_compression": (
+                f"NETCDF4 zlib complevel={config.output_compression_level} shuffle=True"
+            ),
+        }
+    )
+    return ds
+
+
+def _compressed_netcdf_encoding(ds: xr.Dataset, compression_level: int) -> dict:
+    compression_level = int(np.clip(compression_level, 0, 9))
+    encoding = {}
+    for var_name, variable in ds.variables.items():
+        if not variable.dims:
+            continue
+        if variable.dtype.kind in {"O", "U", "S"}:
+            continue
+        encoding[var_name] = {
+            "zlib": True,
+            "complevel": compression_level,
+            "shuffle": True,
+        }
+    return encoding
+
+
+def save_filtered_mrr_dataset(
+    ds: xr.Dataset,
+    *,
+    config: MRRInterferenceConfig,
+    date_selected: str,
+) -> Path:
+    output_dir = Path(config.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / config.output_file_template.format(
+        site=config.site_selected,
+        site_selected=config.site_selected,
+        date_selected=date_selected,
+    )
+
+    ds = add_postprocessing_metadata(ds, config=config, date_selected=date_selected)
+    if output_file.exists() and not config.output_overwrite:
+        print(f"Output file exists and overwrite is disabled; keeping {output_file}")
+        return output_file
+
+    encoding = _compressed_netcdf_encoding(ds, config.output_compression_level)
+    ds.to_netcdf(
+        output_file,
+        engine="netcdf4",
+        format="NETCDF4",
+        encoding=encoding,
+    )
+    print(f"Saved filtered MRR dataset to {output_file}")
+    return output_file
 
 
 def _mark_true_runs(condition: np.ndarray, min_length: int) -> np.ndarray:
@@ -809,19 +1173,37 @@ def plot_time_height_Ze(ds_mrr, date_selected, info_output, time_stamps):
     # format xaxis with time stamps as HH:MM
     plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M'))
     plt.gcf().autofmt_xdate()
-    plt.title('MRR Radar Reflectivity')
+    #plt.title('MRR Radar Reflectivity')
 
     # plot vertical lines for the time stamps selected
-    for time_stamp in time_stamps:
-        time_stamp_dt = pd.to_datetime(time_stamp)
-        plt.axvline(x=time_stamp_dt, color='r', linestyle='--', label=f'Selected Time: {time_stamp_dt.strftime("%H:%M")}')  
+    #for time_stamp in time_stamps:
+    #    time_stamp_dt = pd.to_datetime(time_stamp)
+    #    plt.axvline(x=time_stamp_dt, color='r', linestyle='--', label=f'Selected Time: {time_stamp_dt.strftime("%H:%M")}')  
 
-    if time_stamps:
-        plt.legend()
-    
+    #if time_stamps:
+    #    plt.legend()
+
+
     # set ylim min at the first height with Ze values non Nan
     min_height_idx = np.where(np.any(np.isfinite(Ze), axis=0))[0][0]
     plt.ylim(height[min_height_idx], height.max())
+
+    # add xlabel as time in UTC
+    plt.xlabel('Time [UTC]')
+
+    # remove the top and right spines of the plot
+    plt.gca().spines['top'].set_visible(False)
+    plt.gca().spines['right'].set_visible(False)
+    # make the left and bottom spines thicker
+    plt.gca().spines['left'].set_linewidth(1.5)
+    plt.gca().spines['bottom'].set_linewidth(1.5)
+
+    # enlange the font size of the ticks
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+
+    #enlarge all fonts
+    plt.rcParams.update({'font.size': 14})
 
     # save figure
     plt.savefig(f"plots/mrr_reflectivity_{info_output}_{date_selected}.png")
@@ -939,411 +1321,9 @@ def find_MRR_flag(site_selected, date):
 
 if __name__ == "__main__":
 
-    # define the sites and the path to the MRR data and MWR data
-    sites = ['lagonero', 'collalbo']
-    site_selected = "lagonero"
-    path_mrr = f"/data/campaigns/teamx/{site_selected}/mrr/l1/"
+    try:
+        from process.mrr_pipeline import main
+    except ModuleNotFoundError:
+        from mrr_pipeline import main
 
-    # time stamps to plot to understand the interferences
-    time_stamps = ["20250706T12:45:00","20250706T12:50:00"]
-    date_selected = time_stamps[0][:8]
-
-    filter_RR_on = True  # if True, then filter the MRR data based on the MWR rain flag
-    min_interference_extent_factor = 1.0
-    min_interference_layer_fraction = 0.95
-    interference_min_lowest_echo_height = 1500.0
-    min_interference_time_profiles = 2
-    min_lower_echo_time_profiles = 2
-    min_elevated_connected_gates = 4
-    min_lower_echo_connected_gates = 4
-    max_interference_missing_gates = 0
-    max_rain_column_missing_gates = 0
-    lower_echo_height_limit = 1500.0
-    min_lower_echo_peak_ze = -5.0
-    min_lower_continuous_ze_gates = 4
-
-    # read the MRR data for the selected site and day and store in a dataset
-    ds_mrr = read_mrr_data(path_mrr, site_selected, date_selected)
-
-
-    # Convert the MRR height field from time-range to a fixed vertical coordinate.
-    # This keeps Ze as a clean time x range matrix and prevents height from
-    # being treated as a profile variable during rain masking.
-    if "height" in ds_mrr and ds_mrr["height"].dims == ("time", "range"):
-        height_1d = ds_mrr["height"].median(dim="time", skipna=True)
-        ds_mrr = ds_mrr.drop_vars("height").assign_coords(height=("range", height_1d.values))
-
-    os.makedirs("plots", exist_ok=True)
-
-    # if MWR flag file exists, then select only the time stamps where rain flag is true
-    if find_MRR_flag(site_selected, date_selected) and filter_RR_on: 
-
-        # read the MWR flags for the selected site and day and store in a dataset
-        ds_mwr = read_MWR_flags(site_selected, date_selected)
-
-        # Align categorical MWR flags to the MRR timestamps without numeric
-        # interpolation, and report the actual nearest-neighbor time offsets.
-        mwr_time_index = pd.DatetimeIndex(ds_mwr.time.values)
-        mrr_time_index = pd.DatetimeIndex(ds_mrr.time.values)
-        nearest_mwr_index = mwr_time_index.get_indexer(mrr_time_index, method="nearest")
-        valid_nearest = nearest_mwr_index >= 0
-        nearest_offsets = pd.Series(
-            np.abs(mwr_time_index[nearest_mwr_index[valid_nearest]] - mrr_time_index[valid_nearest])
-        )
-        if not nearest_offsets.empty:
-            print(
-                "MWR/MRR nearest-time offsets: "
-                f"median={nearest_offsets.median()}, "
-                f"95%={nearest_offsets.quantile(0.95)}, "
-                f"max={nearest_offsets.max()}"
-            )
-
-        mwr_reindex_tolerance = pd.Timedelta("2min")
-        rain_extension = pd.Timedelta("3min")
-        ds_mwr_interp = ds_mwr.reindex(
-            time=ds_mrr.time,
-            method="nearest",
-            tolerance=mwr_reindex_tolerance,
-        )
-
-        unmatched_mwr_flags = int(ds_mwr_interp.rain.isnull().sum())
-        if unmatched_mwr_flags:
-            print(
-                f"MWR rain flag unmatched for {unmatched_mwr_flags} MRR profiles "
-                f"using tolerance {mwr_reindex_tolerance}. Treating them as not rainy."
-            )
-
-        rain_flag_raw = ds_mwr_interp.rain.fillna(0).astype(bool)
-        mrr_time_step = pd.Series(mrr_time_index).diff().dropna().median()
-        if pd.isna(mrr_time_step) or mrr_time_step <= pd.Timedelta(0):
-            rain_extension_steps = 0
-        else:
-            rain_extension_steps = int(np.ceil(rain_extension / mrr_time_step))
-
-        rain_flag = rain_flag_raw.rolling(
-            time=2 * rain_extension_steps + 1,
-            center=True,
-            min_periods=1,
-        ).max().astype(bool)
-
-        print(
-            "MWR rain-flag expansion on MRR grid: "
-            f"raw={int(rain_flag_raw.sum())} profiles, "
-            f"expanded={int(rain_flag.sum())} profiles, "
-            f"buffer=+/-{rain_extension}."
-        )
-
-        # plot the Ze time height plot for the day before filtering
-        plot_time_height_Ze(ds_mrr, date_selected, info_output="before_filtering", time_stamps=time_stamps)
-
-        # add rain flag to the MRR dataset
-        ds_mrr = ds_mrr.assign(rain_flag=rain_flag)
-
-        # define interference time window for the selected site
-        if site_selected == "lagonero":
-            interference_start = time(6, 30, 0)
-            interference_end = time(16, 0, 0)
-
-        profile_times = pd.to_datetime(ds_mrr.time.values).time
-        interference_window = xr.DataArray(
-            [interference_start <= profile_time <= interference_end for profile_time in profile_times],
-            coords={"time": ds_mrr.time},
-            dims=("time",),
-        )
-
-        mean_interference_vertical_extent = calculate_mean_interference_vertical_extent(
-            ds_mrr["Ze"].where(interference_window).values,
-            ds_mrr["height"].values,
-            min_lowest_echo_height=interference_min_lowest_echo_height,
-            min_connected_gates=min_elevated_connected_gates,
-        )
-        if np.isfinite(mean_interference_vertical_extent):
-            print(
-                "Mean interference vertical extent for "
-                f"{date_selected}: {mean_interference_vertical_extent:.1f} m "
-                f"from profiles with lowest finite Ze above {interference_min_lowest_echo_height:.0f} m."
-            )
-        else:
-            mean_interference_vertical_extent = 1500.0
-            print(
-                "No elevated-only profiles found for mean interference vertical extent; "
-                f"using fallback {mean_interference_vertical_extent:.1f} m."
-            )
-
-        min_interference_vertical_extent = (
-            min_interference_extent_factor * mean_interference_vertical_extent
-        )
-        print(
-            "Elevated-profile keep criterion: "
-            f"continuous Ze extent >= {min_interference_vertical_extent:.1f} m "
-            f"and continuity fraction >= {min_interference_layer_fraction:.2f}, "
-            f"persisting for at least {min_interference_time_profiles} consecutive profiles, "
-            f"with connected Ze segments of at least {min_elevated_connected_gates} gates "
-            f"and at most {max_interference_missing_gates} missing gates inside the kept layer."
-        )
-        print(
-            "Lower-rain keep criterion: "
-            f"lower echo must persist for at least {min_lower_echo_time_profiles} consecutive profiles "
-            f"with at least {min_lower_echo_connected_gates} connected gates below {lower_echo_height_limit:.0f} m "
-            f"and peak Ze >= {min_lower_echo_peak_ze:.1f} dBZ."
-        )
-        print(
-            "Rain-column connectivity criterion: "
-            f"detached upper fragments are removed when separated from the lowest rain column by more than {max_rain_column_missing_gates} missing gates."
-        )
-        print(
-            "Upper-profile routing criterion: "
-            f"process profiles with upper-interference masking when rain flag is on or a continuous Ze segment of at least {min_lower_continuous_ze_gates} gates starts below {lower_echo_height_limit:.0f} m."
-        )
-
-        # Apply the MWR rain flag as a prefilter inside the interference
-        # window. Profiles outside this window remain unchanged. Protect deep,
-        # vertically continuous Ze columns so tall cloud or precipitation
-        # columns are not removed only because the surface/radiometer rain flag
-        # is false.
-        height_for_extent = ds_mrr["height"].values
-        deep_continuous_ze = xr.DataArray(
-            [
-                mrr_has_deep_continuous_ze(
-                    ds_mrr["Ze"].sel(time=time_stamp).values,
-                    height_for_extent,
-                    ze_min=-5.0,
-                    min_vertical_extent_m=min_interference_vertical_extent,
-                    min_layer_fraction=min_interference_layer_fraction,
-                    max_missing_gates=max_interference_missing_gates,
-                )
-                for time_stamp in ds_mrr.time.values
-            ],
-            coords={"time": ds_mrr.time},
-            dims=("time",),
-        )
-        persistent_deep_continuous_ze = xr.DataArray(
-            _mark_true_runs(
-                (deep_continuous_ze & interference_window).values,
-                min_interference_time_profiles,
-            ),
-            coords={"time": ds_mrr.time},
-            dims=("time",),
-        )
-        elevated_only_ze = xr.DataArray(
-            [
-                mrr_is_elevated_only_ze_profile(
-                    ds_mrr["Ze"].sel(time=time_stamp).values,
-                    height_for_extent,
-                    min_lowest_echo_height=interference_min_lowest_echo_height,
-                    ze_min=-5.0,
-                    min_connected_gates=min_elevated_connected_gates,
-                )
-                for time_stamp in ds_mrr.time.values
-            ],
-            coords={"time": ds_mrr.time},
-            dims=("time",),
-        )
-        lower_echo_mask = xr.DataArray(
-            [
-                mrr_has_lower_echo(
-                    ds_mrr["Ze"].sel(time=time_stamp).values,
-                    ds_mrr["W"].sel(time=time_stamp).values,
-                    height_for_extent,
-                    search_below_height=lower_echo_height_limit,
-                    min_connected_gates=min_lower_echo_connected_gates,
-                    ze_min=-10,
-                    min_peak_ze=min_lower_echo_peak_ze,
-                )
-                for time_stamp in ds_mrr.time.values
-            ],
-            coords={"time": ds_mrr.time},
-            dims=("time",),
-        )
-        lower_continuous_ze_mask = xr.DataArray(
-            [
-                mrr_has_continuous_ze_starting_below_height(
-                    ds_mrr["Ze"].sel(time=time_stamp).values,
-                    height_for_extent,
-                    start_below_height=lower_echo_height_limit,
-                    ze_min=-10,
-                    min_connected_gates=min_lower_continuous_ze_gates,
-                    max_missing_gates=max_rain_column_missing_gates,
-                )
-                for time_stamp in ds_mrr.time.values
-            ],
-            coords={"time": ds_mrr.time},
-            dims=("time",),
-        )
-        persistent_lower_continuous_ze = xr.DataArray(
-            _mark_true_runs(
-                (lower_continuous_ze_mask & interference_window).values,
-                min_lower_echo_time_profiles,
-            ),
-            coords={"time": ds_mrr.time},
-            dims=("time",),
-        )
-        persistent_lower_echo = xr.DataArray(
-            _mark_true_runs(
-                (lower_echo_mask & interference_window).values,
-                min_lower_echo_time_profiles,
-            ),
-            coords={"time": ds_mrr.time},
-            dims=("time",),
-        )
-        protected_profiles = int((persistent_deep_continuous_ze & ~rain_flag).sum())
-        if protected_profiles:
-            print(
-                f"Protected {protected_profiles} non-rain profiles from MWR prefilter "
-                "because Ze has a deep, mostly continuous finite layer that persists in time."
-            )
-        removed_elevated_profiles = int(
-            (elevated_only_ze & ~persistent_deep_continuous_ze & interference_window).sum()
-        )
-        if removed_elevated_profiles:
-            print(
-                f"Flagged {removed_elevated_profiles} elevated-only profiles inside the interference window "
-                "for removal because their Ze extent is too short, not continuous enough, or they do not persist in time."
-            )
-
-        vars_to_keep = {"height", "range", "lat", "lon", "latitude", "longitude", "altitude", "time", "rain_flag"}
-        for var_name in ds_mrr.data_vars:
-            if "time" in ds_mrr[var_name].dims and var_name not in vars_to_keep:
-                ds_mrr[var_name] = ds_mrr[var_name].where(
-                    rain_flag | persistent_deep_continuous_ze | persistent_lower_continuous_ze | ~interference_window
-                )
-
-        # loop on time stamps to filter interference:
-        for time_stamp in ds_mrr.time.values:
-
-            # read Ze and vd profiles for the selected time stamp and the corresponding rain flag
-            ze_profile = ds_mrr["Ze"].sel(time=time_stamp).values
-            vd_profile = ds_mrr["W"].sel(time=time_stamp).values
-            mwr_rain_flag = bool(ds_mrr["rain_flag"].sel(time=time_stamp).values)
-            if "time" in ds_mrr["height"].dims:
-                height_profile = ds_mrr["height"].sel(time=time_stamp).values
-            else:
-                height_profile = ds_mrr["height"].values
-
-            # Inside the interference time window, first check whether the
-            # profile contains a connected lower echo that looks like real rain.
-            # If it does, preserve the lower part and only look for
-            # interference-like structure aloft.
-            if interference_start <= pd.to_datetime(time_stamp).time() <= interference_end:
-                profile_persistent_deep_continuous_ze = bool(
-                    persistent_deep_continuous_ze.sel(time=time_stamp).values
-                )
-                profile_elevated_only_ze = bool(
-                    elevated_only_ze.sel(time=time_stamp).values
-                )
-
-                # Remove elevated-only profiles unless their Ze layer is deep
-                # enough and sufficiently continuous compared with the typical
-                # daily interference extent.
-                if profile_elevated_only_ze and not profile_persistent_deep_continuous_ze:
-                    ds_mrr["Ze"].loc[dict(time=time_stamp)] = np.nan
-                    ds_mrr["W"].loc[dict(time=time_stamp)] = np.nan
-                    continue
-
-                lower_echo = bool(lower_echo_mask.sel(time=time_stamp).values)
-                profile_persistent_lower_echo = bool(
-                    persistent_lower_echo.sel(time=time_stamp).values
-                )
-                profile_persistent_lower_continuous_ze = bool(
-                    persistent_lower_continuous_ze.sel(time=time_stamp).values
-                )
-                process_upper_profile = bool(
-                    mwr_rain_flag or profile_persistent_lower_continuous_ze
-                )
-                
-                # If the MWR rain flag is true and a lower echo exists, treat
-                # the profile as rain-plus-possible-interference and only mask
-                # suspicious gates above the protected lower region.
-                if process_upper_profile and (lower_echo or profile_persistent_lower_echo):
-                    result = mask_upper_interference(
-                        ze=ze_profile,
-                        vd=vd_profile,
-                        height=height_profile,
-                        combine="or",
-                        mask_all_above=False,
-                        vd_tolerance=0.075,
-                        plateau_min_gates=5,
-                        ze_min_step=2.0,
-                        interference_above_height=1500.0,
-                        evidence_window=5,
-                        min_evidence_gates=3,
-                    )
-
-                    ze_connected, vd_connected = keep_lowest_connected_ze_component(
-                        result.ze_filtered,
-                        result.vd_filtered,
-                        ze_min=-10,
-                        max_missing_gates=max_rain_column_missing_gates,
-                    )
-
-                    ze_filtered = ze_connected
-                    vd_filtered = vd_connected
-                    
-                    # update the Ze and vd profiles with the filtered values
-                    ds_mrr["Ze"].loc[dict(time=time_stamp)] = ze_filtered
-                    ds_mrr["W"].loc[dict(time=time_stamp)] = vd_filtered
-                
-                elif process_upper_profile:
-                    result = mask_upper_interference(
-                        ze=ze_profile,
-                        vd=vd_profile,
-                        height=height_profile,
-                        combine="or",
-                        mask_all_above=False,
-                        vd_tolerance=0.075,
-                        plateau_min_gates=5,
-                        ze_min_step=2.0,
-                        interference_above_height=2500.0,
-                        evidence_window=5,
-                        min_evidence_gates=3,
-                    )
-
-                    ze_filtered, vd_filtered = keep_lowest_connected_ze_component(
-                        result.ze_filtered,
-                        result.vd_filtered,
-                        ze_min=-10,
-                        max_missing_gates=max_rain_column_missing_gates,
-                    )
-
-                    ds_mrr["Ze"].loc[dict(time=time_stamp)] = ze_filtered
-                    ds_mrr["W"].loc[dict(time=time_stamp)] = vd_filtered
-
-                elif mwr_rain_flag and (not lower_echo or not profile_persistent_lower_echo):
-                    if not profile_persistent_deep_continuous_ze:
-                        ds_mrr["Ze"].loc[dict(time=time_stamp)] = np.nan
-                        ds_mrr["W"].loc[dict(time=time_stamp)] = np.nan
-                        continue
-
-                    print(
-                        f"Time {time_stamp} is rainy but has no connected lower echo. "
-                        "Checking the full profile for interference-like mid/upper-level structure."
-                    )
-                    detection = check_profile(
-                        ze_profile, 
-                        vd_profile, 
-                        vd_tolerance=0.075, 
-                        plateau_min_gates=3, 
-                        ze_min_step=2.0, 
-                        zigzag_min_turns=2, 
-                        combine='or')
-                    
-                    plateau_mask = detection.velocity_plateau
-                    zigzag_mask = detection.ze_zigzag
-                    interference_mask = detection.combined
-
-                    Ze_filtered = np.asarray(ze_profile, dtype=float).copy()
-                    Ze_filtered[interference_mask] = np.nan
-                    vd_filtered = np.asarray(vd_profile, dtype=float).copy()
-                    vd_filtered[interference_mask] = np.nan
-
-                    # update the Ze and vd profiles with the filtered values
-                    ds_mrr["Ze"].loc[dict(time=time_stamp)] = Ze_filtered
-                    ds_mrr["W"].loc[dict(time=time_stamp)] = vd_filtered
-                else:
-                    continue  # No interference, no filtering to apply
-
-                    
-        # plot the Ze time height plot for the day after filtering
-        plot_time_height_Ze(ds_mrr, date_selected, info_output="after_filtering", time_stamps=time_stamps)
-
-    
+    main()

@@ -33,6 +33,10 @@ def main():
     sites = ["lagonero", "collalbo", "bolzano"] # sites to plot the insets for, other options are "bolzano" and "collalbo"
     mode = "convective_days" # other option is ""MOBL_T_days"# "
     iwv_colorbar_scale_factor = 1.25
+    fixed_anomaly_colorbars = {
+        "iwv": (-12, 12, np.arange(-12, 13, 4)),
+        "IWV_deviation": (-2, 2, np.arange(-2, 3, 1)),
+    }
     dc_hours = np.array([pd.to_datetime(hour, format="%H:%M").hour for hour in hours_diurnal_cycle_calc[3:]]) # array of the hours of the diurnal cycle to plot
     # loop on elevation angles, variables to plot and sites
     for elev_sel in elevs:
@@ -145,17 +149,20 @@ def main():
                 f"/home/cacquist/Documents/GitHub/EXPATS/teams_obs/data/anomalies/mean_anomaly_{mode}_{var_plot}_{site_name}_elev_{elev_sel}.nc"
                 for elev_sel in elevs
             ]
-            colorbar_vmin, colorbar_vmax = get_shared_colorbar_limits(
-                anomaly_paths,
-                "mean_anomaly",
-                var_plot,
-                symmetric=True,
-                scale_factor=iwv_colorbar_scale_factor if var_plot == "iwv" else 1.0,
-            )
-            colorbar_vmin, colorbar_vmax, colorbar_ticks = get_regular_integer_colorbar_spec(
-                colorbar_vmin,
-                colorbar_vmax,
-            )
+            if var_plot in fixed_anomaly_colorbars:
+                colorbar_vmin, colorbar_vmax, colorbar_ticks = fixed_anomaly_colorbars[var_plot]
+            else:
+                colorbar_vmin, colorbar_vmax = get_shared_colorbar_limits(
+                    anomaly_paths,
+                    "mean_anomaly",
+                    var_plot,
+                    symmetric=True,
+                    scale_factor=iwv_colorbar_scale_factor if var_plot == "iwv" else 1.0,
+                )
+                colorbar_vmin, colorbar_vmax, colorbar_ticks = get_regular_integer_colorbar_spec(
+                    colorbar_vmin,
+                    colorbar_vmax,
+                )
 
             for elev_sel in elevs:
                 input_path = f"/home/cacquist/Documents/GitHub/EXPATS/teams_obs/data/anomalies/mean_anomaly_{mode}_{var_plot}_{site_name}_elev_{elev_sel}.nc"
@@ -170,11 +177,11 @@ def main():
                 os.makedirs(os.path.dirname(plot_output_path), exist_ok=True)
 
                 ds_mean_anomaly = xr.open_dataset(input_path)
-                panel_title_fontsize = 22
-                direction_label_fontsize = 22
-                colorbar_label_fontsize = 22
-                colorbar_tick_fontsize = 22
-                suptitle_fontsize = 22
+                panel_title_fontsize = 26
+                direction_label_fontsize = 26
+                colorbar_label_fontsize = 286
+                colorbar_tick_fontsize = 26
+                suptitle_fontsize = 26
 
                 fig, axes = plt.subplots(3, 3, figsize=(15, 15), subplot_kw={'projection': 'polar'})
                 axes = axes.flatten()
@@ -211,7 +218,7 @@ def main():
                     cbar.ax.tick_params(labelsize=colorbar_tick_fontsize)
 
                 # in bold, add a suptitle with the variable name, site name, elevation angle and mode of days plotted
-                plt.suptitle(f"Mean anomaly of {VAR_DICT[var_plot]['label']} - {PLOT_SITES_NAMES[site_name]} - {elev_sel}° elev - {mode.replace('_', ' ').title()}", fontsize=suptitle_fontsize, fontweight='bold')
+                plt.suptitle(f"{VAR_DICT[var_plot]['label']} mean anomaly - {PLOT_SITES_NAMES[site_name]} - {mode.replace('_', ' ').title()}", fontsize=suptitle_fontsize, fontweight='bold')
                 plt.savefig(plot_output_path)
                 plt.close(fig)
                 ds_mean_anomaly.close()

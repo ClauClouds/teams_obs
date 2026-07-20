@@ -59,7 +59,7 @@ def read_MWR_flags(site, date):
     
     # select time stamps whe
     
-    # create a rain flag: when quality flag == 6 set rain flag to 1, otherwise set to 0
+    # create a rain flag: when rain rate >0, set rain flag to 1, otherwise set to 0
     rain_flag = np.zeros(len(rain_rate), dtype=int)
     ind_rain = np.where(rain_rate > 0.)[0]
     rain_flag[ind_rain] = 1

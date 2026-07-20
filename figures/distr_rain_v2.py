@@ -47,6 +47,11 @@ def main():
     ds_collalbo_mobl_t = xr.open_dataset("data/mrr_ze_profiles/collalbo_mobl_t_rain_occurrence_v2.nc")
     ds_lagonero_mobl_t = xr.open_dataset("data/mrr_ze_profiles/lagonero_mobl_t_rain_occurrence_v2.nc")
     ds_bolzano_mobl_t = xr.open_dataset("data/mrr_ze_profiles/bolzano_mobl_t_rain_occurrence_v2.nc")
+    all_case_counts = {
+        "collalbo": ds_collalbo.sizes["file"],
+        "lagonero": ds_lagonero.sizes["file"],
+        "bolzano": ds_bolzano.sizes["file"],
+    }
 
     dict_rain_ratio, dict_mean = calc_rain_ratio(ds_collalbo, ds_lagonero, ds_bolzano)
     dict_rain_ratio_convective, dict_mean_convective = calc_rain_ratio(ds_collalbo_conv, ds_lagonero_conv, ds_bolzano_conv)
@@ -57,7 +62,7 @@ def main():
     "(rainy time stamps / total time stamps \n" \
     " in each 2h time bin)"
     ylim = 60
-    plot_rain_occ_diurnal(dict_rain_ratio,dict_rain_ratio_convective, dict_rain_ratio_mobl_t, pd.to_datetime(ds_collalbo.time_bin.values), filename_out, ylabel, ylim)
+    plot_rain_occ_diurnal(dict_rain_ratio,dict_rain_ratio_convective, dict_rain_ratio_mobl_t, pd.to_datetime(ds_collalbo.time_bin.values), filename_out, ylabel, ylim, all_case_counts)
 
 
     # read mean rain occurrence for each site and call plotting function to plot diurnal cycle of rain occurrence for the two sites
@@ -85,7 +90,7 @@ def main():
     ylabel2="Mean rain duration over 2 h [min] \n" \
     "(only rainy time stamps)"
     ylim=125
-    plot_rain_occ_diurnal(rain_occ_diurnal, rain_occ_convective, rain_occ_mobl_t, pd.to_datetime(ds_collalbo.time_bin.values), filename_out, ylabel2, ylim)
+    plot_rain_occ_diurnal(rain_occ_diurnal, rain_occ_convective, rain_occ_mobl_t, pd.to_datetime(ds_collalbo.time_bin.values), filename_out, ylabel2, ylim, all_case_counts)
 
 
 
@@ -138,7 +143,7 @@ def read_rain_data(dict_mean):
         "bolzano": mean_rain_occ_bolzano*120
     }
     return rain_occ_diurnal
-def plot_rain_occ_diurnal(rain_occ_diurnal, rain_occ_convective, rain_occ_mobl_t, time_bins, filename_out, ylabel, ylim):
+def plot_rain_occ_diurnal(rain_occ_diurnal, rain_occ_convective, rain_occ_mobl_t, time_bins, filename_out, ylabel, ylim, all_case_counts):
 
     font_size = 20
 
@@ -173,7 +178,7 @@ def plot_rain_occ_diurnal(rain_occ_diurnal, rain_occ_convective, rain_occ_mobl_t
         print(rain_occ_diurnal[site])
         axes.plot(hour_ticks, 
                  rain_occ_diurnal[site], 
-                 label=PLOT_SITES_NAMES[site], color=colors[site], linewidth=4)
+                 label=f"{PLOT_SITES_NAMES[site]} - all days (N={all_case_counts[site]})", color=colors[site], linewidth=4)
         axes.plot(hour_ticks,
                  rain_occ_convective[site],
                  label=f"{PLOT_SITES_NAMES[site]} - convective days", color=colors[site], linewidth=4, linestyle="--")

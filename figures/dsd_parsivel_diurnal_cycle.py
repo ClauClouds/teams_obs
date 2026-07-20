@@ -5,6 +5,7 @@ We then overplot the convective mean DSD and the MOBL_T dsd over the same time i
 """
 
 from matplotlib.colors import LogNorm
+from matplotlib.lines import Line2D
 import xarray as xr
 import site
 from turtle import mode
@@ -28,7 +29,29 @@ import os
 import pdb
 
 
+def smooth_dsd_profile(profile, window_size=3):
+    if window_size <= 1:
+        return np.asarray(profile, dtype=float)
+
+    kernel = np.ones(window_size, dtype=float)
+    profile = np.asarray(profile, dtype=float)
+    valid_mask = np.isfinite(profile)
+
+    summed_values = np.convolve(np.where(valid_mask, profile, 0.0), kernel, mode="same")
+    valid_counts = np.convolve(valid_mask.astype(float), kernel, mode="same")
+
+    smoothed_profile = np.full(profile.shape, np.nan, dtype=float)
+    np.divide(summed_values, valid_counts, out=smoothed_profile, where=valid_counts > 0)
+    return smoothed_profile
+
+
 def main():
+
+    # colors for locations from matplotlib colors
+    col_LN = "mediumblue"
+    col_CB = "purple"
+    col_BZ = "orchid"
+
 
     def format_hour_interval(hour_labels, index):
         start_time = pd.to_datetime(hour_labels[index], format="%H:%M")
@@ -40,31 +63,37 @@ def main():
         return f"{start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
         
 
-    sites = ['lagonero', 'collalbo'] # select site to plot
+    sites = ['Schwartzseespitze', 'Klobenstein', 'Bozen'] # select site to plot
+    dsd_smoothing_window = 3
+    parsivel_patterns = {
+        'Schwartzseespitze': 'PARS2020M_Schwarzseespitze',
+        'Klobenstein': 'PARS2020L_Klobenstein',
+        'Bozen': 'PARS2020A_Bozen',
+    }
+    site_colors = {
+        'Schwartzseespitze': col_LN,
+        'Klobenstein': col_CB,
+        'Bozen': col_BZ,
+    }
     site_counts = {}
     for site in sites:
             
-        parsivel_path= f"/data/obs/campaigns/teamx/{site}/parsivel/netcdf/2025/"
+        parsivel_path= f"/data/campaigns/teamx/kit_data/Parsivel_netcdf/"
+        print(f"Processing site: {site}")
 
-        # find all parsivel data for a given site
-        if site == "lagonero":
-            file_list, n_files = find_all_files_for_site(parsivel_path, "Lagonero", "Lagonero", ".nc.gz")
-        elif site == "collalbo":
-            file_list, n_files = find_all_files_for_site(parsivel_path, "Collalbo", "Collalbo", ".nc.gz")
+        # Use the site-specific instrument code and on-disk site spelling.
+        file_list, n_files = find_all_files_for_site(
+            parsivel_path,
+            parsivel_patterns[site],
+            site,
+            ".nc.gz",
+        )
         
         print(f"Found {n_files} parsivel files for site {site}.")
         if n_files == 0:
             raise ValueError(f"No Parsivel files found for site {site} under {parsivel_path}.")
 
-        print(f"First file: {file_list[0]}")
-
-        # select all those file that have date in the convective days list
-        convective_files = [file for file in file_list if any(day in file for day in iop_conv_days)]
-        print(f"Found {len(convective_files)} convective parsivel files for site {site}.")
-
-        # select all those file that have date in the MoBL_T days list
-        MoBL_T_files = [file for file in file_list if any(day in file for day in iop_MoBL_T_days)]
-        print(f"Found {len(MoBL_T_files)} MoBL_T parsivel files for site {site}.")
+        print(f"First file: {file_list[0]}, {site}")
 
         first_valid_ds = None
         for filename in file_list:
@@ -93,9 +122,9 @@ def main():
         first_valid_ds.close()
 
         # loop on files to read parsivel data and store data in
-        dsd_matrix = np.full((n_files, len(hours_diurnal_cycle_calc), n_diameter_bins), np.nan)
-        dsd_matrix_conv = np.full((n_files, len(hours_diurnal_cycle_calc), n_diameter_bins), np.nan)
-        dsd_matrix_MoBL_T = np.full((n_files, len(hours_diurnal_cycle_calc), n_diameter_bins), np.nan)
+        dsd_matrix = np.full((n_files, len(hours_diurnal_cycle_calc[3:]), n_diameter_bins), np.nan)
+        dsd_matrix_conv = np.full((n_files, len(hours_diurnal_cycle_calc[3:]), n_diameter_bins), np.nan)
+        dsd_matrix_MoBL_T = np.full((n_files, len(hours_diurnal_cycle_calc[3:]), n_diameter_bins), np.nan)
         
         # loop on all files to read parsivel data and store mean dsd for each time interval in the corresponding array
         for i_file, filename in enumerate(file_list):
@@ -122,7 +151,7 @@ def main():
                 day = filename.split("/")[-1].split(".")[0].split("_")[0]
 
                 # define time intervals for the diurnal cycle calculation as strings in the format "YYYY-MM-DDTHH:MM:SS" for each day and each hour of the diurnal cycle calculation
-                interval_starts = [f"{day[:4]}-{day[4:6]}-{day[6:8]}T{hour}:00" for hour in hours_diurnal_cycle_calc]
+                interval_starts = [f"{day[:4]}-{day[4:6]}-{day[6:8]}T{hour}:00" for hour in hours_diurnal_cycle_calc[3:]]
                 next_day = pd.Timestamp(day) + pd.Timedelta(days=1)
                 interval_ends = interval_starts[1:] + [f"{next_day.strftime('%Y-%m-%d')}T00:00:00"]
                 
@@ -132,7 +161,7 @@ def main():
                 dsd_mean_MoBL_T = np.full((len(interval_starts), n_diameter_bins), np.nan)
                 
                 # loop on time intervals
-                for i, time_sel in enumerate(hours_diurnal_cycle_calc):
+                for i, time_sel in enumerate(hours_diurnal_cycle_calc[3:]):
 
                     # slice dataset for the time selection 
                     ds_time_sel = ds.sel(time=slice(interval_starts[i], interval_ends[i]))
@@ -175,9 +204,9 @@ def main():
         }
 
         # store data in xarray and save to file ncdf
-        dsd_mean_all_xr = xr.DataArray(dsd_mean_all, coords=[hours_diurnal_cycle_calc, diameter_plot], dims=["time_interval", "diameter"])
-        dsd_mean_conv_all_xr = xr.DataArray(dsd_mean_conv_all, coords=[hours_diurnal_cycle_calc, diameter_plot], dims=["time_interval", "diameter"])
-        dsd_mean_MoBL_T_all_xr = xr.DataArray(dsd_mean_MoBL_T_all, coords=[hours_diurnal_cycle_calc, diameter_plot], dims=["time_interval", "diameter"])
+        dsd_mean_all_xr = xr.DataArray(dsd_mean_all, coords=[hours_diurnal_cycle_calc[3:], diameter_plot], dims=["time_interval", "diameter"])
+        dsd_mean_conv_all_xr = xr.DataArray(dsd_mean_conv_all, coords=[hours_diurnal_cycle_calc[3:], diameter_plot], dims=["time_interval", "diameter"])
+        dsd_mean_MoBL_T_all_xr = xr.DataArray(dsd_mean_MoBL_T_all, coords=[hours_diurnal_cycle_calc[3:], diameter_plot], dims=["time_interval", "diameter"])
         ds_out = xr.Dataset({
             "dsd_mean_all": dsd_mean_all_xr,
             "dsd_mean_conv_all": dsd_mean_conv_all_xr,
@@ -189,9 +218,10 @@ def main():
 
 
     # read data from both files
-    ds_lagonero = xr.open_dataset("data/diurnal_cycle/dsd_diurnal_cycle_dsd_lagonero.nc")
-    ds_collalbo = xr.open_dataset("data/diurnal_cycle/dsd_diurnal_cycle_dsd_collalbo.nc")
-    
+    ds_lagonero = xr.open_dataset("data/diurnal_cycle/dsd_diurnal_cycle_dsd_Schwartzseespitze.nc")
+    ds_collalbo = xr.open_dataset("data/diurnal_cycle/dsd_diurnal_cycle_dsd_Klobenstein.nc")
+    ds_bolzano = xr.open_dataset("data/diurnal_cycle/dsd_diurnal_cycle_dsd_Bozen.nc")
+
     # plot dsds for each time interval in a subplot, with the convective and MoBL_T mean dsds overplotted for both sites together
     # distinguish sites from linestile solid or dashed
     # set x and y axis to log scale, and set limits to the same for all subplots
@@ -200,54 +230,48 @@ def main():
     tick_label_fontsize = 14
     legend_fontsize = 13
     fig, axes = plt.subplots(nrows=3, ncols=3, figsize=(15, 10), sharex=True, sharey=True)
-    legend_handles_by_category = {
-        "all": [],
-        "convective": [],
-        "MoBL_T": [],
-    }
-    for i, hour in enumerate(hours_diurnal_cycle_calc):
+    for i, hour in enumerate(hours_diurnal_cycle_calc[3:]):
 
         ax = axes[i//3, i%3]
 
-        for ds, site_key, site_name, linestyle in zip(
-            [ds_lagonero, ds_collalbo],
-            ["lagonero", "collalbo"],
-            ["Schwartzseespitze", "Klobenstein"],
-            ["solid", "dashed"],
+        for ds, site_key, site_name in zip(
+            [ds_lagonero, ds_collalbo, ds_bolzano],
+            ["Schwartzseespitze", "Klobenstein", "Bozen"],
+            ["Schwartzseespitze", "Klobenstein", "Bozen"],
         ):
             site_count = site_counts[site_key]
+            site_color = site_colors[site_key]
+            dsd_all_smoothed = smooth_dsd_profile(ds.dsd_mean_all[i, :].values, dsd_smoothing_window)
+            dsd_conv_smoothed = smooth_dsd_profile(ds.dsd_mean_conv_all[i, :].values, dsd_smoothing_window)
+            dsd_mobl_t_smoothed = smooth_dsd_profile(ds.dsd_mean_MoBL_T_all[i, :].values, dsd_smoothing_window)
             line_all, = ax.plot(
                 diameter_plot,
-                ds.dsd_mean_all[i, :],
+                dsd_all_smoothed,
                 label=f"{site_name} - All days (N={site_count['all']})",
-                color="grey",
+                color=site_color,
                 linewidth=4,
-                linestyle=linestyle,
+                linestyle="solid",
             )
             line_conv, = ax.plot(
                 diameter_plot,
-                ds.dsd_mean_conv_all[i, :],
+                dsd_conv_smoothed,
                 label=f"{site_name} - Convective (N={site_count['convective']})",
-                color="orange",
+                color=site_color,
                 linewidth=4,
-                linestyle=linestyle,
+                linestyle="dashed",
             )
             line_mobl_t, = ax.plot(
                 diameter_plot,
-                ds.dsd_mean_MoBL_T_all[i, :],
+                dsd_mobl_t_smoothed,
                 label=f"{site_name} - MoBL_T (N={site_count['MoBL_T']})",
-                color="green",
+                color=site_color,
                 linewidth=4,
-                linestyle=linestyle,
+                linestyle="dotted",
             )
-            if i == 0:
-                legend_handles_by_category["all"].append(line_all)
-                legend_handles_by_category["convective"].append(line_conv)
-                legend_handles_by_category["MoBL_T"].append(line_mobl_t)
-        
+
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.set_title(f"Time interval: {format_hour_interval(hours_diurnal_cycle_calc, i)}", fontsize=title_fontsize)
+        ax.set_title(f"Time interval: {format_hour_interval(hours_diurnal_cycle_calc[3:], i)}", fontsize=title_fontsize)
         if i // 3 == 2:
             ax.set_xlabel("Diameter (mm)", fontsize=axis_label_fontsize)
         else:
@@ -262,26 +286,45 @@ def main():
         ax.spines["left"].set_linewidth(1.5)
         ax.spines["bottom"].set_linewidth(1.5)
 
-    legend_handles = (
-        legend_handles_by_category["all"]
-        + legend_handles_by_category["convective"]
-        + legend_handles_by_category["MoBL_T"]
+    site_legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=site_colors[site_name],
+            linewidth=4,
+            linestyle="solid",
+            label=f"{site_name} (All: N={site_counts[site_name]['all']})",
+        )
+        for site_name in ["Schwartzseespitze", "Klobenstein", "Bozen"]
+    ]
+    category_legend_handles = [
+        Line2D([0], [0], color="black", linewidth=4, linestyle="solid", label="All days"),
+        Line2D([0], [0], color="black", linewidth=4, linestyle="dashed", label="Convective"),
+        Line2D([0], [0], color="black", linewidth=4, linestyle="dotted", label="MoBL_T"),
+    ]
+
+    fig.legend(
+        handles=site_legend_handles,
+        loc="lower center",
+        ncol=3,
+        bbox_to_anchor=(0.5, 0.055),
+        frameon=False,
+        fontsize=legend_fontsize,
+        columnspacing=1.6,
+        handlelength=2.8,
+    )
+    fig.legend(
+        handles=category_legend_handles,
+        loc="lower center",
+        ncol=3,
+        bbox_to_anchor=(0.5, 0.02),
+        frameon=False,
+        fontsize=legend_fontsize,
+        columnspacing=1.6,
+        handlelength=2.8,
     )
 
-    if legend_handles:
-        fig.legend(
-            handles=legend_handles,
-            labels=[handle.get_label() for handle in legend_handles],
-            loc="lower center",
-            ncol=3,
-            bbox_to_anchor=(0.5, 0.035),
-            frameon=False,
-            fontsize=legend_fontsize,
-            columnspacing=1.2,
-            handlelength=2.8,
-        )
-
-    plt.tight_layout(rect=[0.0, 0.11, 1.0, 1.0])
+    plt.tight_layout(rect=[0.0, 0.14, 1.0, 1.0])
     output_dir = "plots"
     os.makedirs(output_dir, exist_ok=True)
     plt.savefig(os.path.join(output_dir, f"dsd_diurnal_cycle.png"), dpi=300)

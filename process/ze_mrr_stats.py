@@ -190,7 +190,6 @@ def calc_ze_profiles(file_list, time_bins, site_name, mode, plotting=False):
     plt.legend(title="Time of day")
     plt.savefig(f"mean_ze_profiles_by_time_{site_name}_{mode}.png")
     plt.close() 
-    pdb.set_trace()
 
     # store ze profiles in a dataset and save it as a netcdf file
     ds_output = xr.Dataset(

@@ -18,7 +18,7 @@ from figures.utils import find_all_files_for_site
 def main():
     
     # select for which site you want to do the comparison of the distributions of IWV and LWP for convective and MOBL-T conditions
-    site = "bolzano" # specify site to plot ("bolzano", "collalbo", or "lagonero")
+    site = "collalbo" # specify site to plot ("bolzano", "collalbo", or "lagonero")
 
     if site == "bolzano":
         title_labels = ['a)', 'b)']
@@ -159,6 +159,7 @@ def main():
     ax1.spines['bottom'].set_linewidth(1.5)
     ax1.spines['left'].set_linewidth(1.5)
     ax1.grid(color='grey', alpha=0.5, linestyle='--')
+    ax1.set_ylim(0, 0.2)
 
     plt.subplot(1, 2, 2)
     # plot normalized histogram line thick 
@@ -209,19 +210,20 @@ def main():
         )
     
     # set log scale on x
-    #plt.xscale("log")
+    plt.xscale("log")
     plt.xlabel("LWP [g/m^2]")
     plt.ylabel("Normalized frequency")
     # add title and align it to the left 
     plt.title(f"{title_labels[1]} {PLOT_SITES_NAMES[site]}", loc='left')
     # set x lim 
-    plt.xlim(0, 800)
+    plt.xlim(20, 800)
     ax2 = plt.gca()
     ax2.spines['top'].set_visible(False)
     ax2.spines['right'].set_visible(False)
     ax2.spines['bottom'].set_linewidth(1.5)
     ax2.spines['left'].set_linewidth(1.5)
     ax2.grid(color='grey', alpha=0.5, linestyle='--')
+    ax2.set_ylim(0, 0.014)
 
     # plot only one legend for both subplots in the center of the figure under the x axis
     handles, labels = ax1.get_legend_handles_labels()

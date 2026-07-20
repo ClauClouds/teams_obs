@@ -62,10 +62,10 @@ def plot_mean_azimuth_ring(ax, azimuth_edges_deg, values, var_plot, vmin=None, v
 
 def main():
 
-    elevs = [10, 20, 30] # elevation angles to plot the diurnal cycle for, other options are 10, 20, 30,
-    vars2plot = ["iwv", "IWV_deviation"] # other options are "lwp" and "IWV_deviation"
+    elevs = [30]#[10, 20, 30] # elevation angles to plot the diurnal cycle for, other options are 10, 20, 30,
+    vars2plot = ["iwv"]#["iwv", "IWV_deviation"] # other options are "lwp" and "IWV_deviation"
     sites = ["lagonero", "collalbo", "bolzano"] # sites to plot the insets for, other options are "bolzano" and "collalbo"
-    
+
     # loop on elevation angles, variables to plot and sites
     for elev_sel in elevs:
         for var_plot in vars2plot:
@@ -75,7 +75,7 @@ def main():
                 print("----------------------------------------------------------------")
                 # define the time and variable to plot
                 mode =   "MOBL_T_days" #"diurnal_cycle" #"convective_days" # or#depending on the selected days list
-                interval_start_hours = hours_diurnal_cycle_calc
+                interval_start_hours = hours_diurnal_cycle_calc[3:]
                 panel_title_fontsize = 16
                 direction_label_fontsize = 16
                 colorbar_label_fontsize = 16
@@ -83,7 +83,7 @@ def main():
                 suptitle_fontsize = 20
 
                 output_file_nc = f"data/diurnal_cycle/mean_{mode}_{var_plot}_{site_name}_elev_{elev_sel}.nc"
-                figure_file = f"plots/dc_spatial_{mode}_{var_plot}_{site_name}_elev_{elev_sel}.png"
+                figure_file = f"plots/poster_plots/dc_spatial_{mode}_{var_plot}_{site_name}_elev_{elev_sel}.png"
 
                 if os.path.exists(output_file_nc):
                     print(f"File {output_file_nc} already exists. Skipping")

@@ -1,0 +1,53 @@
+# MRR interference filtering configuration.
+
+# config for TEAMx campaign
+campaign:
+  site: "lagonero" # or "collalbo"
+  start_date: "20250626"
+  end_date: "20250908"
+  start_datetime: "2025-06-26T16:00:00"
+  end_datetime: "2025-09-08T23:59:59"
+
+processing:
+  remove_interference: true
+  calculate_uncertainty: true
+  make_plots: false
+
+output:
+  output_dir: "/data/campaigns/teamx/{site}/mrr/l2"
+  overwrite: true # overwrite existing files in output_dir
+  compression_level: 9
+
+
+# Use {site_selected} in path_mrr_template to derive the MRR input path.
+sites: 
+    lagonero:
+        path_mrr_template: "/data/campaigns/teamx/lagonero/mrr/l1/"
+        interference_windows:
+          start: "06:30:00"
+          end: "16:00:00"
+        filtering:
+          filter_RR_on: true
+          min_interference_extent_factor: 1.0
+          min_interference_layer_fraction: 0.95
+          interference_min_lowest_echo_height: 1500.0
+          min_interference_time_profiles: 2
+          min_lower_echo_time_profiles: 2
+          min_elevated_connected_gates: 4
+          min_lower_echo_connected_gates: 4
+          max_interference_missing_gates: 0
+          max_rain_column_missing_gates: 0
+          lower_echo_height_limit: 1500.0
+          min_lower_echo_peak_ze: -5.0
+          min_lower_continuous_ze_gates: 4
+        rain_flag_config:
+          use_mwr_rain_flag: true
+          allow_missing_mwr_rain_flag: true
+          min_rain_column_height: 1500.0
+          min_rain_column_ze: -5.0
+          min_rain_column_connected_gates: 4
+          max_rain_column_missing_gates: 0
+          mwr_reindex_tolerance: "2min"
+          rain_extension: "3min"
+
+

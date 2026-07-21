@@ -43,11 +43,11 @@ def main():
 
     # define the sites and the path to the MRR data and MWR data
     sites = ['lagonero', 'collalbo']
-    site_selected = "lagonero"
+    site_selected = "collalbo"
     path_mrr = f"/data/campaigns/teamx/{site_selected}/mrr/l1/"
 
     # time stamps to plot to understand the interferences
-    time_stamps = ["20250705T12:45:00","20250705T12:50:00"]
+    time_stamps = ["20250828T03:00:00","20250828T15:00:00"]
     date_selected = time_stamps[0][:8]
 
     # read the MRR data for the selected site and day and store in a dataset
@@ -63,7 +63,7 @@ def main():
     os.makedirs("plots", exist_ok=True)
 
     # if MWR flag file exists, then select only the time stamps where rain flag is true
-    if find_MRR_flag(site_selected, date_selected) and filter_RR_on: 
+    if read_MWR_flags(site_selected, date_selected) is not None and filter_RR_on:
 
         # read the MWR flags for the selected site and day and store in a dataset
         ds_mwr = read_MWR_flags(site_selected, date_selected)
@@ -77,6 +77,8 @@ def main():
             coords={"time": ds_mrr.time},
             dims=("time",),
         )
+        # plot time height Ze for the entire day
+        plot_time_height_Ze(ds_mrr, date_selected, time_stamps, "process_mrr_test_before_filtering")
 
         # check interference patterns in the MRR data for the selected site and day
         #calculate_interference_patterns(ds_mrr, date_selected, rain_flag)
@@ -90,7 +92,7 @@ def main():
                 ds_mrr[var_name] = ds_mrr[var_name].where(rain_flag)
 
         # plot time height Ze for the entire day
-        plot_time_height_Ze(ds_mrr, date_selected, time_stamps, "rain_flag_filtered")
+        plot_time_height_Ze(ds_mrr, date_selected, time_stamps, "process_mrr_test_after_filtering")
 
     # plot spectrogram for the selected time stamps to understand the interferences
     for time_stamp in time_stamps:

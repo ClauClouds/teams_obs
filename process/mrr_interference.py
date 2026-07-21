@@ -18,6 +18,7 @@ try:
         mrr_has_continuous_ze_starting_below_height,
         mrr_has_deep_continuous_ze,
         mrr_has_lower_echo,
+        mrr_has_top_rooted_ze_extent,
         mrr_is_elevated_only_ze_profile,
     )
 except ModuleNotFoundError:
@@ -36,6 +37,7 @@ except ModuleNotFoundError:
         mrr_has_continuous_ze_starting_below_height,
         mrr_has_deep_continuous_ze,
         mrr_has_lower_echo,
+        mrr_has_top_rooted_ze_extent,
         mrr_is_elevated_only_ze_profile,
     )
 
@@ -54,5 +56,6 @@ __all__ = [
     "mrr_has_continuous_ze_starting_below_height",
     "mrr_has_deep_continuous_ze",
     "mrr_has_lower_echo",
+    "mrr_has_top_rooted_ze_extent",
     "mrr_is_elevated_only_ze_profile",
 ]

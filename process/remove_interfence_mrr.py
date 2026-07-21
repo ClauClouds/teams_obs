@@ -161,6 +161,10 @@ class MRRInterferenceConfig:
     min_lower_echo_connected_gates: int
     max_interference_missing_gates: int
     max_rain_column_missing_gates: int
+    protect_top_rooted_profiles: bool
+    top_rooted_min_vertical_extent: float
+    keep_lowest_connected_component: bool
+    apply_upper_interference_masking: bool
     lower_echo_height_limit: float
     min_lower_echo_peak_ze: float
     min_lower_continuous_ze_gates: int
@@ -175,6 +179,7 @@ class MRRInterferenceConfig:
     output_file_template: str
     output_compression_level: int
     output_overwrite: bool
+    final_time_average: str | None
     calculate_uncertainty: bool
     campaign_start_date: str | None
     campaign_end_date: str | None
@@ -314,6 +319,10 @@ def load_mrr_interference_config(config_path: str | Path) -> MRRInterferenceConf
         min_lower_echo_connected_gates=int(filtering_config["min_lower_echo_connected_gates"]),
         max_interference_missing_gates=int(filtering_config["max_interference_missing_gates"]),
         max_rain_column_missing_gates=int(filtering_config["max_rain_column_missing_gates"]),
+        protect_top_rooted_profiles=bool(filtering_config.get("protect_top_rooted_profiles", False)),
+        top_rooted_min_vertical_extent=float(filtering_config.get("top_rooted_min_vertical_extent", 1000.0)),
+        keep_lowest_connected_component=bool(filtering_config.get("keep_lowest_connected_component", True)),
+        apply_upper_interference_masking=bool(filtering_config.get("apply_upper_interference_masking", True)),
         lower_echo_height_limit=float(filtering_config["lower_echo_height_limit"]),
         min_lower_echo_peak_ze=float(filtering_config["min_lower_echo_peak_ze"]),
         min_lower_continuous_ze_gates=int(filtering_config["min_lower_continuous_ze_gates"]),
@@ -334,6 +343,7 @@ def load_mrr_interference_config(config_path: str | Path) -> MRRInterferenceConf
         ),
         output_compression_level=int(output_config.get("compression_level", 9)),
         output_overwrite=bool(output_config.get("overwrite", True)),
+        final_time_average=processing_config.get("final_time_average", "5min"),
         calculate_uncertainty=bool(processing_config.get("calculate_uncertainty", False)),
         campaign_start_date=campaign_config.get("start_date"),
         campaign_end_date=campaign_config.get("end_date"),
@@ -434,6 +444,10 @@ def add_postprocessing_metadata(
             "postprocessing_min_lower_echo_connected_gates": config.min_lower_echo_connected_gates,
             "postprocessing_max_interference_missing_gates": config.max_interference_missing_gates,
             "postprocessing_max_rain_column_missing_gates": config.max_rain_column_missing_gates,
+            "postprocessing_protect_top_rooted_profiles": str(config.protect_top_rooted_profiles),
+            "postprocessing_top_rooted_min_vertical_extent_m": config.top_rooted_min_vertical_extent,
+            "postprocessing_keep_lowest_connected_component": str(config.keep_lowest_connected_component),
+            "postprocessing_apply_upper_interference_masking": str(config.apply_upper_interference_masking),
             "postprocessing_lower_echo_height_limit_m": config.lower_echo_height_limit,
             "postprocessing_min_lower_echo_peak_ze_dbz": config.min_lower_echo_peak_ze,
             "postprocessing_min_lower_continuous_ze_gates": config.min_lower_continuous_ze_gates,
@@ -443,6 +457,7 @@ def add_postprocessing_metadata(
                 "All data variables with both time and range dimensions were masked; "
                 f"skipped variables: {','.join(sorted(PROFILE_MASK_SKIP_VARS))}."
             ),
+            "postprocessing_final_time_average": str(config.final_time_average),
             "postprocessing_output_compression": (
                 f"NETCDF4 zlib complevel={config.output_compression_level} shuffle=True"
             ),
@@ -668,6 +683,57 @@ def mrr_has_deep_continuous_ze(
     best_extent = max(best_extent, float(height[previous] - height[run_start]))
 
     return best_extent >= required_extent
+
+
+def mrr_has_top_rooted_ze_extent(
+    ze: np.ndarray,
+    height: np.ndarray,
+    *,
+    min_vertical_extent_m: float = 1000.0,
+    ze_min: float | None = None,
+    max_missing_gates: int = 0,
+) -> bool:
+    """Return True when echo starts at the highest range gate and extends downward.
+
+    The highest finite height gate must contain finite Ze. The connected echo
+    layer is then followed downward, allowing up to ``max_missing_gates``
+    missing gates. The profile is protected when that top-rooted layer spans at
+    least ``min_vertical_extent_m``.
+    """
+    ze = np.asarray(ze, dtype=float)
+    height = np.asarray(height, dtype=float)
+    if ze.ndim != 1 or height.ndim != 1 or ze.shape != height.shape:
+        raise ValueError("ze and height must be one-dimensional arrays of equal length")
+    if min_vertical_extent_m < 0:
+        raise ValueError("min_vertical_extent_m must be non-negative")
+    if max_missing_gates < 0:
+        raise ValueError("max_missing_gates must be non-negative")
+
+    finite_height_indices = np.flatnonzero(np.isfinite(height))
+    if finite_height_indices.size == 0:
+        return False
+
+    top_index = int(finite_height_indices[-1])
+    echo = np.isfinite(ze) & np.isfinite(height)
+    if ze_min is not None:
+        echo &= ze >= ze_min
+    if not echo[top_index]:
+        return False
+
+    bottom_index = top_index
+    missing_run = 0
+    for index in range(top_index - 1, -1, -1):
+        if not np.isfinite(height[index]):
+            continue
+        if echo[index]:
+            bottom_index = index
+            missing_run = 0
+            continue
+        missing_run += 1
+        if missing_run > max_missing_gates:
+            break
+
+    return float(height[top_index] - height[bottom_index]) >= min_vertical_extent_m
 
 
 def calculate_mean_interference_vertical_extent(
@@ -1166,10 +1232,19 @@ def plot_time_height_Ze(ds_mrr, date_selected, info_output, time_stamps):
     height = ds_mrr.height.values
 
     plt.figure(figsize=(10, 6))
-    plt.pcolormesh(time, height, Ze.T, shading='auto', cmap='viridis')
-    plt.colorbar(label='Radar Reflectivity [dBZ]')
-    plt.ylabel('Height [m]')
+    finite_ze = np.isfinite(Ze)
+    mesh = plt.pcolormesh(time, height, Ze.T, shading='auto', cmap='viridis')
+    plt.colorbar(mesh, label='Radar Reflectivity [dBZ]')
+    if finite_ze.any():
+        # Set colorbar limits to the min and max finite Ze values.
+        mesh.set_clim(np.nanmin(Ze), np.nanmax(Ze))
+    else:
+        print(
+            f"No finite Ze values available for {info_output} on {date_selected}; "
+            "saving an empty reflectivity quicklook."
+        )
 
+    plt.ylabel('Height [m]')
     # format xaxis with time stamps as HH:MM
     plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M'))
     plt.gcf().autofmt_xdate()
@@ -1184,12 +1259,16 @@ def plot_time_height_Ze(ds_mrr, date_selected, info_output, time_stamps):
     #    plt.legend()
 
 
-    # set ylim min at the first height with Ze values non Nan
-    min_height_idx = np.where(np.any(np.isfinite(Ze), axis=0))[0][0]
-    plt.ylim(height[min_height_idx], height.max())
+    # Set ylim min at the first height with finite Ze values when available.
+    valid_height_indices = np.where(np.any(finite_ze, axis=0))[0]
+    if valid_height_indices.size:
+        min_height_idx = valid_height_indices[0]
+        plt.ylim(height[min_height_idx], height.max())
+    else:
+        plt.ylim(np.nanmin(height), np.nanmax(height))
 
     # add xlabel as time in UTC
-    plt.xlabel('Time [UTC]')
+    plt.xlabel('Time [UTC]', fontsize=14)
 
     # remove the top and right spines of the plot
     plt.gca().spines['top'].set_visible(False)

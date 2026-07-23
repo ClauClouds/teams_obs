@@ -428,7 +428,7 @@ def make_video_from_frames(input_framerate, output_prefix, output_dir, target_du
     return None
 
 
-def find_all_files_for_site(path_root, filename_string, site_name, file_ending):
+def find_all_files_for_site(path_root, filename_string, site_name, file_ending=".nc"):
     """
     function to find all files witha given string in all subdirectories of a given root path
 
@@ -444,7 +444,6 @@ def find_all_files_for_site(path_root, filename_string, site_name, file_ending):
 
     all_files = []
     for root, dirs, files in os.walk(path_root):
-        print(files)
         for file in files:
             if file.endswith(file_ending) and filename_string in file:
                 all_files.append(os.path.join(root, file))
@@ -489,7 +488,8 @@ def read_file_list_for_mode(path_root, site_name, mode, iop_conv_days, iop_MoBL_
         file_found_list = [file for file in file_found_list if any(day in file for day in iop_MoBL_T_days)]
     else:
         raise ValueError("mode must be either 'diurnal_cycle', 'convective_days' or 'MOBL_T_days'")
-    print(f"Found {len(file_found_list)} files for site {site_name} and mode {mode} in path {path_root}.")
+    N_stat = len(file_found_list)
+    print(f"Found {N_stat} files for site {site_name} and mode {mode} in path {path_root}.")
 
     return file_found_list, N_stat
 

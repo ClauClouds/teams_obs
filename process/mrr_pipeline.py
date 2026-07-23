@@ -7,7 +7,8 @@ dates, interference window, and site-specific filter switches are read from
 
 Common processing applied to configured sites:
 - read the MRR level-1 daily file for the selected site and date;
-- convert time-dependent MRR height to a fixed range coordinate when needed;
+- preserve time-dependent MRR height so each profile keeps the height vector
+  valid at its timestamp;
 - read the MWR rain flag, reindex it to MRR time with the configured tolerance,
   and expand rainy periods by the configured rain-extension buffer;
 - mask non-rain MRR profiles inside the configured interference window unless
@@ -27,6 +28,8 @@ Collalbo processing:
 - uses the Collalbo interference window from the YAML;
 - protects profiles whose echo reaches the highest range gate and extends
   downward by at least ``top_rooted_min_vertical_extent``;
+- removes short detached upper Ze fragments above lower-rooted profiles using
+  ``remove_short_detached_ze_columns``;
 - uses the MWR rain flag, but sets
   ``apply_upper_interference_masking: false`` and
   ``keep_lowest_connected_component: false`` to avoid over-chopping rooted,
@@ -36,13 +39,15 @@ Collalbo processing:
 How to run:
 source .teams_venv/bin/activate
 python process/mrr_pipeline.py --config process/remove_interfence_mrr_config.yaml
+nohup python process/mrr_pipeline.py --config process/remove_interfence_mrr_config.yaml > logs/log_collalbo_20250516_20250909.log 2>&1 & 
+PID 187196
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -64,6 +69,7 @@ try:
         calculate_mean_interference_vertical_extent,
         check_profile,
         keep_lowest_connected_ze_component,
+        mask_short_detached_ze_columns,
         mask_upper_interference,
         mrr_has_continuous_ze_starting_below_height,
         mrr_has_deep_continuous_ze,
@@ -82,6 +88,7 @@ except ModuleNotFoundError:
         calculate_mean_interference_vertical_extent,
         check_profile,
         keep_lowest_connected_ze_component,
+        mask_short_detached_ze_columns,
         mask_upper_interference,
         mrr_has_continuous_ze_starting_below_height,
         mrr_has_deep_continuous_ze,
@@ -92,6 +99,13 @@ except ModuleNotFoundError:
     from mrr_io import find_MRR_flag, read_mrr_data, save_filtered_mrr_dataset
     from mrr_plots import plot_time_height_Ze
 
+
+def _height_profile_for_time(ds: xr.Dataset, time_stamp) -> np.ndarray:
+    """Return the height vector that belongs to one MRR profile."""
+    height = ds["height"]
+    if "time" in height.dims:
+        return height.sel(time=time_stamp).values
+    return height.values
 
 
 def average_mrr_dataset_over_time(ds: xr.Dataset, frequency: str | None) -> xr.Dataset:
@@ -176,6 +190,7 @@ class ProcessedMRRDay:
 
     dataset: xr.Dataset
     output_file: Path | None
+    output_files: list[Path]
 
 
 def process_mrr_day(config, *, date_selected: str | None = None, make_plots: bool = True, save_output: bool | None = None) -> ProcessedMRRDay:
@@ -203,6 +218,9 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
     top_rooted_min_vertical_extent = config.top_rooted_min_vertical_extent
     keep_lowest_connected_component = config.keep_lowest_connected_component
     apply_upper_interference_masking = config.apply_upper_interference_masking
+    remove_short_detached_ze_columns = config.remove_short_detached_ze_columns
+    max_detached_ze_column_vertical_extent = config.max_detached_ze_column_vertical_extent
+    min_detached_ze_column_base_height = config.min_detached_ze_column_base_height
     lower_echo_height_limit = config.lower_echo_height_limit
     min_lower_echo_peak_ze = config.min_lower_echo_peak_ze
     min_lower_continuous_ze_gates = config.min_lower_continuous_ze_gates
@@ -221,12 +239,16 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
                 f"No MRR profiles remain for {date_selected} after applying campaign time limits."
             )
 
-    # Convert the MRR height field from time-range to a fixed vertical coordinate.
-    # This keeps Ze as a clean time x range matrix and prevents height from
-    # being treated as a profile variable during rain masking.
-    if "height" in ds_mrr and ds_mrr["height"].dims == ("time", "range"):
-        height_1d = ds_mrr["height"].median(dim="time", skipna=True)
-        ds_mrr = ds_mrr.drop_vars("height").assign_coords(height=("range", height_1d.values))
+    # Keep the original MRR height field. From 2025-05-26 onward the height
+    # range changed at both sites, so height can be time-dependent and must
+    # remain available as the per-timestamp height vector in the output.
+    if "height" in ds_mrr:
+        if "height" in ds_mrr.coords and "time" in ds_mrr["height"].dims:
+            ds_mrr = ds_mrr.reset_coords("height")
+        ds_mrr["height"].attrs.setdefault(
+            "postprocessing_note",
+            "Preserved from input so each timestamp retains its own height vector.",
+        )
 
     os.makedirs("plots", exist_ok=True)
 
@@ -382,12 +404,11 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
         # vertically continuous Ze columns so tall cloud or precipitation
         # columns are not removed only because the surface/radiometer rain flag
         # is false.
-        height_for_extent = ds_mrr["height"].values
         deep_continuous_ze = xr.DataArray(
             [
                 mrr_has_deep_continuous_ze(
                     ds_mrr["Ze"].sel(time=time_stamp).values,
-                    height_for_extent,
+                    _height_profile_for_time(ds_mrr, time_stamp),
                     ze_min=-5.0,
                     min_vertical_extent_m=min_interference_vertical_extent,
                     min_layer_fraction=min_interference_layer_fraction,
@@ -410,7 +431,7 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
             [
                 mrr_is_elevated_only_ze_profile(
                     ds_mrr["Ze"].sel(time=time_stamp).values,
-                    height_for_extent,
+                    _height_profile_for_time(ds_mrr, time_stamp),
                     min_lowest_echo_height=interference_min_lowest_echo_height,
                     ze_min=-5.0,
                     min_connected_gates=min_elevated_connected_gates,
@@ -425,7 +446,7 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
                 mrr_has_lower_echo(
                     ds_mrr["Ze"].sel(time=time_stamp).values,
                     ds_mrr["W"].sel(time=time_stamp).values,
-                    height_for_extent,
+                    _height_profile_for_time(ds_mrr, time_stamp),
                     search_below_height=lower_echo_height_limit,
                     min_connected_gates=min_lower_echo_connected_gates,
                     ze_min=-10,
@@ -440,7 +461,7 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
             [
                 mrr_has_continuous_ze_starting_below_height(
                     ds_mrr["Ze"].sel(time=time_stamp).values,
-                    height_for_extent,
+                    _height_profile_for_time(ds_mrr, time_stamp),
                     start_below_height=lower_echo_height_limit,
                     ze_min=-10,
                     min_connected_gates=min_lower_continuous_ze_gates,
@@ -456,7 +477,7 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
                 protect_top_rooted_profiles
                 and mrr_has_top_rooted_ze_extent(
                     ds_mrr["Ze"].sel(time=time_stamp).values,
-                    height_for_extent,
+                    _height_profile_for_time(ds_mrr, time_stamp),
                     min_vertical_extent_m=top_rooted_min_vertical_extent,
                     ze_min=-10,
                     max_missing_gates=max_interference_missing_gates,
@@ -518,10 +539,7 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
             ze_profile = ds_mrr["Ze"].sel(time=time_stamp).values
             vd_profile = ds_mrr["W"].sel(time=time_stamp).values
             mwr_rain_flag = bool(ds_mrr["rain_flag"].sel(time=time_stamp).values)
-            if "time" in ds_mrr["height"].dims:
-                height_profile = ds_mrr["height"].sel(time=time_stamp).values
-            else:
-                height_profile = ds_mrr["height"].values
+            height_profile = _height_profile_for_time(ds_mrr, time_stamp)
 
             # Inside the interference time window, first check whether the
             # profile contains a connected lower echo that looks like real rain.
@@ -552,6 +570,22 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
                         np.ones_like(height_profile, dtype=bool),
                     )
                     continue
+
+                if remove_short_detached_ze_columns:
+                    short_detached_mask = mask_short_detached_ze_columns(
+                        ze_profile,
+                        height_profile,
+                        lower_root_max_height=lower_echo_height_limit,
+                        min_lower_connected_gates=min_lower_continuous_ze_gates,
+                        max_missing_gates=max_rain_column_missing_gates,
+                        max_detached_vertical_extent_m=max_detached_ze_column_vertical_extent,
+                        min_detached_base_height_m=min_detached_ze_column_base_height,
+                        ze_min=-10,
+                    )
+                    if short_detached_mask.any():
+                        apply_range_gate_mask_to_profile(ds_mrr, time_stamp, short_detached_mask)
+                        ze_profile = ds_mrr["Ze"].sel(time=time_stamp).values
+                        vd_profile = ds_mrr["W"].sel(time=time_stamp).values
 
                 if not apply_upper_interference_masking:
                     continue
@@ -734,30 +768,51 @@ def process_mrr_day(config, *, date_selected: str | None = None, make_plots: boo
         ds_mrr.attrs["postprocessing_uncertainty_status"] = "calculated"
         ds_mrr.attrs["postprocessing_uncertainty_variables"] = ",".join(ds_unc.data_vars)
 
-    if config.final_time_average:
-        print(f"Averaging processed MRR dataset over {config.final_time_average} before saving")
-        ds_mrr = average_mrr_dataset_over_time(ds_mrr, config.final_time_average)
-
-    # plot the Ze time height plot for the day after filtering
-    if make_plots:
-        plot_time_height_Ze(
-            ds_mrr,
-            date_selected,
-            info_output="pipeline_after_averaging",
-            time_stamps=time_stamps,
-        )
-
-
     if save_output is None:
         save_output = config.save_filtered_dataset
 
     output_file = None
+    output_files: list[Path] = []
+    ds_return = ds_mrr
     if save_output:
-        print(f"Saving filtered MRR dataset for site {site_selected} on {date_selected}")
-        output_file = save_filtered_mrr_dataset(ds_mrr, config=config, date_selected=date_selected)
+        for time_res in config.time_resolutions:
+            if time_res == "1min":
+                ds_to_save = ds_mrr
+                final_time_average = None
+            elif time_res in {"5min", "5_min"}:
+                final_time_average = "5min"
+                print(f"Averaging processed MRR dataset over {final_time_average} before saving")
+                ds_to_save = average_mrr_dataset_over_time(ds_mrr, final_time_average)
+                if make_plots:
+                    plot_time_height_Ze(
+                        ds_to_save,
+                        date_selected,
+                        info_output="pipeline_after_averaging",
+                        time_stamps=time_stamps,
+                    )
+            else:
+                raise ValueError(f"Unsupported output time resolution: {time_res}")
+
+            output_config = replace(
+                config,
+                time_res=time_res,
+                final_time_average=final_time_average,
+            )
+            print(
+                f"Saving {time_res} filtered MRR dataset for site "
+                f"{site_selected} on {date_selected}"
+            )
+            saved_file = save_filtered_mrr_dataset(
+                ds_to_save,
+                config=output_config,
+                date_selected=date_selected,
+            )
+            output_files.append(saved_file)
+            output_file = saved_file
+            ds_return = ds_to_save
 
     print(f"----------------- processing {date_selected} for site {site_selected} completed -----------------")
-    return ProcessedMRRDay(dataset=ds_mrr, output_file=output_file)
+    return ProcessedMRRDay(dataset=ds_return, output_file=output_file, output_files=output_files)
 
 
 def get_configured_dates(config) -> list[str]:

@@ -2,6 +2,7 @@
 # plot folder to ignore
 plots/
 *.png
+logs/
 
 # unused code files to ignore
 teamx_obs/unused_code.py
